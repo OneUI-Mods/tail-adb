@@ -1,6 +1,22 @@
 # 検証記録と手順
 
-## 確認済み（2026-10-16）
+## 保存した実機基準（2026-10-16）
+
+| 項目 | 検証時の値 |
+| --- | --- |
+| 端末 | Galaxy S26 Ultra / SM-S948Q |
+| OS / API | Android 16 / 36 |
+| One UIプロパティ | `ro.build.version.oneui=80500` |
+| ビルド | `BP4A.251205.006.S948QOPS1AZHL` |
+| セキュリティパッチ | 2026-08-05 |
+| Tailscale | `1.104.1-t7f4efe814-g6d75bd403` / code `298567190` |
+| Tailscaleの場所 | 仕事用プロファイル。実際の所有UIDを検査して接続 |
+| Tail ADB | 0.1.0 / code 1 / release / debuggable=false |
+| APK SHA-256 | `f4a4367f493a0bacad38e8649ff6bd445b96fc66827fd797c3c65566d2b0965a` |
+
+端末側のadbdハッシュと配布署名は[開発者向けガイド](development.md)に保存しています。OS更新でこの環境が失われても、今回の確認基準を参照できます。個人のIP、端末シリアル、tailnet、接続ログは公開していません。
+
+## 確認済み
 
 - SM-S948Q / Android 16の実機上で、ADB shellの既存su権限を使った独立backendを起動・停止。
 - Tailscaleの実インターフェース・アドレスへ `SO_BINDTODEVICE` で拘束されていることを確認。
