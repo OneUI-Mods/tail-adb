@@ -14,6 +14,16 @@ Tailscaleに接続したAndroid端末へ、ADBで接続するためのroot用ア
 
 このアプリが作る待受は、確認したTailscaleのIPアドレスとVPNインターフェースだけに結び付けます。**Android標準や他のアプリが開いているADB待受は変更・停止しません。**
 
+## インストール
+
+[GitHub Releases](https://github.com/ryuya0124/tail-adb/releases)から `TailAdb-0.1.0.apk` をダウンロードし、Androidでインストールします。配布物は専用鍵で署名したrelease APKです。XposedやVectorのスコープ設定は必要ありません。
+
+パソコンから導入する場合は、既に利用できるADB経由で次を実行します。
+
+```sh
+adb install -r TailAdb-0.1.0.apk
+```
+
 ## 必要なもの
 
 - 上記の対応端末と、既存のroot環境。
