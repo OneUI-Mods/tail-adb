@@ -1,0 +1,1 @@
+<resources><style name="Theme.TailAdb" parent="Theme.Material3.DayNight.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:windowLightStatusBar">false</item></style></resources>

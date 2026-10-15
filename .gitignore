@@ -1,0 +1,12 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+artifacts/
+*.log
+*.jks
+*.keystore
+*.p12
+signing.properties
+.DS_Store
+.cxx/
