@@ -18,8 +18,14 @@
     <string name="language">App language</string>
     <string name="system_language">System language</string>
     <string name="choose_language">Choose language</string>
-    <string name="channel">Tailscale ADB connection</string>
-    <string name="notification">Tailscale-only ADB</string>
+    <string name="connected_host">Current ADB host</string>
+    <string name="allow_root_host">Allow root for this host</string>
+    <string name="revoke_root_host">Revoke root for this host</string>
+    <string name="root_enabled">root allowed</string>
+    <string name="shell_only">shell only</string>
+    <string name="allowed_hosts">Hosts allowed to use su</string>
+    <string name="no_allowed_hosts">None</string>
+    <string name="root_host_explanation">Every connection starts as the Android shell user. The su command works only for a connected Tailscale IP explicitly allowed here. Changing access restarts this app’s private ADB listener.</string>
     <string name="state_stopped">Stopped</string>
     <string name="state_starting">Starting</string>
     <string name="state_stopping">Stopping</string>
@@ -32,6 +38,7 @@
     <string name="state_bind">Could not open the Tailscale port</string>
     <string name="state_crashes">Stopped after repeated ADB failures</string>
     <string name="state_running">Another instance is already running</string>
+    <string name="state_security">The security policy could not be enforced</string>
     <string name="state_error">Could not start ADB</string>
     <string name="root_allowed">Root access available</string>
     <string name="root_checking">Checking root access</string>

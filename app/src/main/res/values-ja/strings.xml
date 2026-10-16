@@ -18,8 +18,14 @@
     <string name="language">アプリの言語</string>
     <string name="system_language">端末の言語に従う</string>
     <string name="choose_language">言語を選択</string>
-    <string name="channel">Tailscale ADBの接続</string>
-    <string name="notification">Tailscale専用ADB</string>
+    <string name="connected_host">現在のADB接続元</string>
+    <string name="allow_root_host">このホストのroot昇格を許可</string>
+    <string name="revoke_root_host">このホストのroot昇格を取り消す</string>
+    <string name="root_enabled">root許可済み</string>
+    <string name="shell_only">shellのみ</string>
+    <string name="allowed_hosts">suを許可したホスト</string>
+    <string name="no_allowed_hosts">なし</string>
+    <string name="root_host_explanation">接続直後は必ずAndroidのshellユーザーです。suは、ここで明示的に許可した接続中のTailscale IPからだけ利用できます。許可の変更時は、このアプリ専用のADB待受を起動し直します。</string>
     <string name="state_stopped">停止中</string>
     <string name="state_starting">開始しています</string>
     <string name="state_stopping">停止しています</string>
@@ -32,6 +38,7 @@
     <string name="state_bind">Tailscaleのポートを開けませんでした</string>
     <string name="state_crashes">ADBの異常終了が続いたため停止しました</string>
     <string name="state_running">別の接続処理が動作中です</string>
+    <string name="state_security">セキュリティポリシーを適用できなかったため停止しました</string>
     <string name="state_error">ADBを開始できませんでした</string>
     <string name="root_allowed">root権限を利用できます</string>
     <string name="root_checking">root権限を確認しています</string>

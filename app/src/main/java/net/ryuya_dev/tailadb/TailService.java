@@ -1,44 +1,43 @@
 package net.ryuya_dev.tailadb;
 
-import android.app.*;
-import android.content.*;
-import android.content.pm.ServiceInfo;
-import android.os.*;
-import androidx.core.app.NotificationCompat;
+import android.app.Service;
+import android.content.Intent;
+import android.os.IBinder;
 import java.io.*;
 import java.util.concurrent.*;
 
 public final class TailService extends Service {
+  static final String ROOT_DIRECTORY = "/data/local/tmp/net.ryuya_dev.tailadb";
   static volatile boolean running;
-  private static final int NOTIFICATION = 1;
   private final ExecutorService work = Executors.newSingleThreadExecutor();
-  private volatile java.lang.Process process;
-  private volatile boolean stopping;
-  private NotificationManager notifications;
-
-  @Override
-  public void onCreate() {
-    super.onCreate();
-    notifications = getSystemService(NotificationManager.class);
-    notifications.createNotificationChannel(
-        new NotificationChannel(
-            "connection", getString(R.string.channel), NotificationManager.IMPORTANCE_LOW));
-  }
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
-    if (intent != null && "STOP".equals(intent.getAction())) {
-      stopBackend();
-      return START_NOT_STICKY;
-    }
     if (running) return START_NOT_STICKY;
     running = true;
-    stopping = false;
-    startForeground(
-        NOTIFICATION, notification("STARTING"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-    State.set(this, "STARTING", "");
-    int port = getSharedPreferences("settings", MODE_PRIVATE).getInt("port", 5555);
-    work.execute(() -> runBackend(port));
+    String action = intent == null ? "" : intent.getAction();
+    boolean stop = "STOP".equals(action), restart = "RESTART".equals(action);
+    State.set(this, stop || restart ? "STOPPING" : "STARTING", "");
+    work.execute(
+        () -> {
+          try {
+            if (restart) {
+              runCommand(true);
+              Thread.sleep(300);
+              State.set(this, "STARTING", "");
+              runCommand(false);
+            } else {
+              runCommand(stop);
+            }
+            Thread.sleep(300);
+            refreshState(this);
+          } catch (Throwable error) {
+            State.set(this, "ERROR_PROCESS", error.getClass().getSimpleName());
+          } finally {
+            running = false;
+            stopSelf(startId);
+          }
+        });
     return START_NOT_STICKY;
   }
 
@@ -46,95 +45,88 @@ public final class TailService extends Service {
     return "'" + text.replace("'", "'\\''") + "'";
   }
 
-  private void runBackend(int port) {
-    boolean sawState = false, error = false;
-    try {
-      String folder = getApplicationInfo().nativeLibraryDir;
-      File helper = new File(folder, "libtailadb_exec.so"),
-          shim = new File(folder, "libtailadb_policy.so");
-      if (!helper.canExecute() || !shim.isFile()) throw new IOException("Missing native backend");
-      String command =
+  private void runCommand(boolean stop) throws Exception {
+    String folder = getApplicationInfo().nativeLibraryDir;
+    File helper = new File(folder, "libtailadb_exec.so");
+    if (!helper.canExecute()) throw new IOException("Missing native backend");
+    String command;
+    if (stop) {
+      command =
+          "exec " + quote(helper.getAbsolutePath()) + " --stop " + quote(ROOT_DIRECTORY);
+    } else {
+      File shim = new File(folder, "libtailadb_policy.so");
+      File su = new File(folder, "libtailadb_su.so");
+      if (!shim.isFile() || !su.canExecute()) throw new IOException("Missing native policy");
+      var settings = getSharedPreferences("settings", MODE_PRIVATE);
+      int port = settings.getInt("port", 5555);
+      String allowed = settings.getString("allowed_hosts", "");
+      command =
           "exec "
               + quote(helper.getAbsolutePath())
-              + " "
+              + " --start "
               + quote(shim.getAbsolutePath())
-              + " /data/local/tmp/net.ryuya_dev.tailadb "
-              + port;
-      process = new ProcessBuilder("su", "-c", command).redirectErrorStream(true).start();
-      if (stopping) process.getOutputStream().close();
-      try (BufferedReader reader =
-          new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-        String line;
-        while ((line = reader.readLine()) != null) {
-          if (!line.startsWith("TAILADB\t")) continue;
-          String[] fields = line.split("\t", 3);
-          if (fields.length < 2) continue;
-          String state = fields[1];
-          if (!state.matches("[A-Z_]{2,40}")) continue;
-          sawState = true;
-          if (state.startsWith("ERROR_")) error = true;
-          if (state.equals("STOPPED") && error) continue;
-          State.set(this, state, fields.length > 2 ? fields[2] : "");
-          notifications.notify(NOTIFICATION, notification(state));
-          android.util.Log.i("TailAdb", state);
-        }
-      }
-      int code = process.waitFor();
-      if (!error)
-        State.set(
-            this, stopping ? "STOPPED" : (sawState && code == 0 ? "STOPPED" : "ERROR_ROOT"), "");
-    } catch (Throwable e) {
-      State.set(this, stopping ? "STOPPED" : "ERROR_PROCESS", e.getClass().getSimpleName());
-    } finally {
-      process = null;
-      running = false;
-      stopForeground(STOP_FOREGROUND_REMOVE);
-      stopSelf();
+              + " "
+              + quote(su.getAbsolutePath())
+              + " "
+              + quote(ROOT_DIRECTORY)
+              + " "
+              + port
+              + " "
+              + quote(allowed == null ? "" : allowed);
+    }
+    java.lang.Process process =
+        new ProcessBuilder("su", "-c", command).redirectErrorStream(true).start();
+    parse(process);
+    if (!process.waitFor(30, TimeUnit.SECONDS)) {
+      process.destroyForcibly();
+      throw new IOException("Root command timeout");
+    }
+    if (process.exitValue() != 0) throw new IOException("Root command failed");
+  }
+
+  static void refreshState(android.content.Context context) {
+    try {
+      String helper = context.getApplicationInfo().nativeLibraryDir + "/libtailadb_exec.so";
+      String command = "exec " + quote(helper) + " --status " + quote(ROOT_DIRECTORY);
+      java.lang.Process process =
+          new ProcessBuilder("su", "-c", command).redirectErrorStream(true).start();
+      parse(context, process);
+      if (!process.waitFor(10, TimeUnit.SECONDS)) process.destroyForcibly();
+    } catch (Throwable error) {
+      if (!running) State.set(context, "ERROR_ROOT", error.getClass().getSimpleName());
     }
   }
 
-  private Notification notification(String state) {
-    PendingIntent open =
-        PendingIntent.getActivity(
-            this,
-            0,
-            new Intent(this, MainActivity.class),
-            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-    PendingIntent stop =
-        PendingIntent.getService(
-            this,
-            1,
-            new Intent(this, TailService.class).setAction("STOP"),
-            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-    return new NotificationCompat.Builder(this, "connection")
-        .setSmallIcon(R.drawable.ic_terminal)
-        .setContentTitle(getString(R.string.notification))
-        .setContentText(getString(State.label(state)))
-        .setContentIntent(open)
-        .setOngoing(true)
-        .setOnlyAlertOnce(true)
-        .addAction(0, getString(R.string.stop), stop)
-        .build();
+  private void parse(java.lang.Process process) throws IOException {
+    parse(this, process);
   }
 
-  private void stopBackend() {
-    stopping = true;
-    State.set(this, "STOPPING", "");
-    java.lang.Process current = process;
-    if (current != null) {
-      try {
-        current.getOutputStream().write('q');
-        current.getOutputStream().flush();
-        current.getOutputStream().close();
-      } catch (IOException ignored) {
-        current.destroy();
+  private static void parse(android.content.Context context, java.lang.Process process)
+      throws IOException {
+    try (BufferedReader reader =
+        new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+      String line;
+      while ((line = reader.readLine()) != null) {
+        if (!line.startsWith("TAILADB\t")) continue;
+        String[] fields = line.split("\t", 3);
+        if (fields.length < 2 || !fields[1].matches("[A-Z_]{2,40}")) continue;
+        if (fields[1].equals("PEER")) {
+          String[] peer = fields.length > 2 ? fields[2].split("\t", 2) : new String[0];
+          State.setPeer(
+              context,
+              peer.length > 0 ? peer[0] : "",
+              peer.length > 1 && peer[1].equals("ALLOWED"));
+        } else if (fields[1].equals("PEER_CLOSED")) {
+          State.setPeer(context, "", false);
+        } else {
+          State.set(context, fields[1], fields.length > 2 ? fields[2] : "");
+        }
       }
-    } else if (!running) stopSelf();
+    }
   }
 
   @Override
   public void onDestroy() {
-    if (running) stopBackend();
     work.shutdown();
     super.onDestroy();
   }

@@ -13,4 +13,5 @@ for native_abi in arm64-v8a x86_64; do
   mkdir -p "$native_output/$native_abi"
   "$native_compilers/${native_target}31-clang" -O2 -Wall -Wextra -Werror -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wl,-z,relro,-z,now native/supervisor.c -o "$native_output/$native_abi/libtailadb_exec.so" -landroid
   "$native_compilers/${native_target}31-clang" -O2 -Wall -Wextra -Werror -fstack-protector-strong -D_FORTIFY_SOURCE=2 -shared -fPIC -Wl,-z,relro,-z,now native/policy.c -o "$native_output/$native_abi/libtailadb_policy.so" -ldl
+  "$native_compilers/${native_target}31-clang" -O2 -Wall -Wextra -Werror -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wl,-z,relro,-z,now native/su_client.c -o "$native_output/$native_abi/libtailadb_su.so"
  done

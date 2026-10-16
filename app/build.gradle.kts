@@ -15,8 +15,8 @@ android {
         applicationId = "net.ryuya_dev.tailadb"
         minSdk = 36
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
     signingConfigs {
         if(!distribution.isEmpty)create("distribution") {

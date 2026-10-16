@@ -21,6 +21,15 @@ final class State {
     c.sendBroadcast(new Intent(ACTION).setPackage(c.getPackageName()));
   }
 
+  static void setPeer(Context c, String address, boolean allowed) {
+    prefs(c)
+        .edit()
+        .putString("peer", address == null ? "" : address)
+        .putBoolean("peer_allowed", allowed)
+        .apply();
+    c.sendBroadcast(new Intent(ACTION).setPackage(c.getPackageName()));
+  }
+
   static int label(String state) {
     return switch (state) {
       case "LISTENING" -> R.string.state_listening;
@@ -34,6 +43,7 @@ final class State {
       case "ERROR_BIND" -> R.string.state_bind;
       case "ERROR_CRASH_LOOP" -> R.string.state_crashes;
       case "ERROR_ALREADY_RUNNING" -> R.string.state_running;
+      case "ERROR_BROKER", "ERROR_CONTROL" -> R.string.state_security;
       case "STOPPED" -> R.string.state_stopped;
       default -> R.string.state_error;
     };

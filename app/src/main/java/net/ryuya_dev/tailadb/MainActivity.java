@@ -1,9 +1,7 @@
 package net.ryuya_dev.tailadb;
 
-import android.Manifest;
 import android.app.LocaleManager;
 import android.content.*;
-import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.os.*;
 import android.view.*;
@@ -22,20 +20,23 @@ import com.google.android.material.progressindicator.CircularProgressIndicator;
 import com.google.android.material.textfield.*;
 import com.google.android.material.textview.MaterialTextView;
 import java.nio.charset.StandardCharsets;
+import java.util.*;
 import java.util.concurrent.*;
 
 public final class MainActivity extends AppCompatActivity {
   private LinearLayout root, connection, settings;
-  private MaterialTextView status, endpoint, rootState;
+  private MaterialTextView status, endpoint, rootState, peerState, allowedHosts;
   private Chip badge;
   private ImageView shield;
   private CircularProgressIndicator progress;
-  private MaterialButton start, stop, copy;
+  private MaterialButton start, stop, copy, allowPeer, revokePeer;
   private TextInputLayout portLayout;
   private TextInputEditText port;
   private NestedScrollView connectScroll, settingsScroll;
   private static boolean requestedRoot;
+  private static volatile boolean rootAvailable;
   private boolean registered;
+  private ScheduledExecutorService statusRefresh;
   private final BroadcastReceiver receiver =
       new BroadcastReceiver() {
         @Override
@@ -136,6 +137,15 @@ public final class MainActivity extends AppCompatActivity {
               }
             });
     address.addView(copy);
+    LinearLayout access = card(connection);
+    access.addView(text(getString(R.string.connected_host), 16));
+    peerState = text("—", 18);
+    peerState.setTypeface(Typeface.MONOSPACE);
+    access.addView(peerState);
+    allowPeer = button(R.string.allow_root_host, () -> setCurrentPeerAllowed(true));
+    access.addView(allowPeer, new LinearLayout.LayoutParams(-1, dp(56)));
+    revokePeer = button(R.string.revoke_root_host, () -> setCurrentPeerAllowed(false));
+    access.addView(revokePeer, new LinearLayout.LayoutParams(-1, dp(56)));
     portLayout = new TextInputLayout(this);
     portLayout.setHint(getString(R.string.port));
     portLayout.setBoxBackgroundMode(TextInputLayout.BOX_BACKGROUND_OUTLINE);
@@ -159,10 +169,7 @@ public final class MainActivity extends AppCompatActivity {
               }
               portLayout.setError(null);
               getSharedPreferences("settings", MODE_PRIVATE).edit().putInt("port", number).apply();
-              if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                  != PackageManager.PERMISSION_GRANTED)
-                requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS}, 11);
-              startForegroundService(new Intent(this, TailService.class));
+              startService(new Intent(this, TailService.class));
               render();
             });
     connection.addView(start, new LinearLayout.LayoutParams(-1, dp(56)));
@@ -178,6 +185,10 @@ public final class MainActivity extends AppCompatActivity {
     security.addView(text(getString(R.string.scope), 16));
     security.addView(text(getString(R.string.compatibility), 16));
     security.addView(text(getString(R.string.isolation), 16));
+    security.addView(text(getString(R.string.root_host_explanation), 16));
+    allowedHosts = text("", 16);
+    allowedHosts.setTypeface(Typeface.MONOSPACE);
+    security.addView(allowedHosts);
     LinearLayout permissions = card(settings);
     permissions.addView(text(getString(R.string.root_hint), 16));
     rootState = text(getString(R.string.root_checking), 16);
@@ -220,6 +231,7 @@ public final class MainActivity extends AppCompatActivity {
               } catch (Exception ignored) {
               }
               boolean result = allowed;
+              rootAvailable = result;
               runOnUiThread(
                   () -> {
                     if (!isDestroyed()) {
@@ -232,11 +244,30 @@ public final class MainActivity extends AppCompatActivity {
         .start();
   }
 
+  private void setCurrentPeerAllowed(boolean allowed) {
+    String peer = State.prefs(this).getString("peer", "");
+    if (peer == null || peer.isBlank()) return;
+    var preferences = getSharedPreferences("settings", MODE_PRIVATE);
+    String saved = preferences.getString("allowed_hosts", "");
+    TreeSet<String> hosts = new TreeSet<>();
+    if (saved != null)
+      for (String item : saved.split(","))
+        if (!item.isBlank()) hosts.add(item);
+    if (allowed) hosts.add(peer);
+    else hosts.remove(peer);
+    preferences.edit().putString("allowed_hosts", String.join(",", hosts)).apply();
+    String state = State.prefs(this).getString("state", "STOPPED");
+    if (!state.equals("STOPPED") && !state.startsWith("ERROR_"))
+      startService(new Intent(this, TailService.class).setAction("RESTART"));
+    render();
+  }
+
   private void render() {
     String code = State.prefs(this).getString("state", "STOPPED"),
         detail = State.prefs(this).getString("detail", "");
     boolean active = code.equals("LISTENING"),
-        busy = code.equals("STARTING") || code.equals("RETRYING") || code.equals("STOPPING");
+        busy = code.equals("STARTING") || code.equals("RETRYING") || code.equals("STOPPING"),
+        backend = active || code.equals("WAITING_TAILSCALE") || code.equals("RETRYING");
     status.setText(R.string.connection);
     badge.setText(State.label(code));
     int icon =
@@ -257,9 +288,24 @@ public final class MainActivity extends AppCompatActivity {
     String host = detail.split("\t", -1)[0];
     endpoint.setText(active ? "adb connect " + host : "—");
     copy.setEnabled(active);
-    start.setEnabled(!TailService.running && !busy);
-    stop.setEnabled(TailService.running);
-    port.setEnabled(!TailService.running);
+    start.setEnabled(!TailService.running && !busy && !backend);
+    stop.setEnabled(!TailService.running && backend);
+    port.setEnabled(!TailService.running && !backend);
+    String peer = State.prefs(this).getString("peer", "");
+    boolean peerAllowed = State.prefs(this).getBoolean("peer_allowed", false);
+    peerState.setText(
+        peer == null || peer.isBlank()
+            ? "—"
+            : peer + "  ·  " + getString(peerAllowed ? R.string.root_enabled : R.string.shell_only));
+    allowPeer.setEnabled(peer != null && !peer.isBlank() && !peerAllowed && !TailService.running);
+    revokePeer.setEnabled(peer != null && !peer.isBlank() && peerAllowed && !TailService.running);
+    String allowed = getSharedPreferences("settings", MODE_PRIVATE).getString("allowed_hosts", "");
+    allowedHosts.setText(
+        getString(R.string.allowed_hosts)
+            + "\n"
+            + (allowed == null || allowed.isBlank()
+                ? getString(R.string.no_allowed_hosts)
+                : allowed.replace(",", "\n")));
     badge.setOnClickListener(
         v ->
             new MaterialAlertDialogBuilder(this)
@@ -274,6 +320,14 @@ public final class MainActivity extends AppCompatActivity {
     super.onStart();
     registerReceiver(receiver, new IntentFilter(State.ACTION), Context.RECEIVER_NOT_EXPORTED);
     registered = true;
+    statusRefresh = Executors.newSingleThreadScheduledExecutor();
+    statusRefresh.scheduleWithFixedDelay(
+        () -> {
+          if (rootAvailable) TailService.refreshState(getApplicationContext());
+        },
+        1,
+        3,
+        TimeUnit.SECONDS);
     render();
   }
 
@@ -282,6 +336,10 @@ public final class MainActivity extends AppCompatActivity {
     if (registered) {
       unregisterReceiver(receiver);
       registered = false;
+    }
+    if (statusRefresh != null) {
+      statusRefresh.shutdownNow();
+      statusRefresh = null;
     }
     super.onStop();
   }
