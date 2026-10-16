@@ -26,8 +26,11 @@
     <string name="allowed_hosts">Hosts allowed to use su</string>
     <string name="no_allowed_hosts">None</string>
     <string name="root_host_explanation">Every connection starts as the Android shell user. The su command works only for a connected Tailscale IP explicitly allowed here. Changing access restarts this app’s private ADB listener.</string>
+    <string name="auto_start">Start automatically</string>
+    <string name="auto_start_explanation">Starts Tail ADB after Android finishes booting, including a software reboot. If root is unavailable, startup stops safely and the app shows an error instead of retrying in a loop.</string>
     <string name="state_stopped">Stopped</string>
     <string name="state_starting">Starting</string>
+    <string name="state_auto_starting">Starting after boot</string>
     <string name="state_stopping">Stopping</string>
     <string name="state_listening">Listening on Tailscale</string>
     <string name="state_waiting">Waiting for Tailscale</string>
@@ -39,6 +42,7 @@
     <string name="state_crashes">Stopped after repeated ADB failures</string>
     <string name="state_running">Another instance is already running</string>
     <string name="state_security">The security policy could not be enforced</string>
+    <string name="state_auto_root">Automatic startup could not obtain root. Open the app after root is available and start manually.</string>
     <string name="state_error">Could not start ADB</string>
     <string name="root_allowed">Root access available</string>
     <string name="root_checking">Checking root access</string>

@@ -16,6 +16,7 @@ import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.color.*;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.progressindicator.CircularProgressIndicator;
 import com.google.android.material.textfield.*;
 import com.google.android.material.textview.MaterialTextView;
@@ -189,6 +190,14 @@ public final class MainActivity extends AppCompatActivity {
     allowedHosts = text("", 16);
     allowedHosts.setTypeface(Typeface.MONOSPACE);
     security.addView(allowedHosts);
+    LinearLayout startup = card(settings);
+    MaterialSwitch autoStart = new MaterialSwitch(this);
+    autoStart.setText(R.string.auto_start);
+    autoStart.setChecked(BootReceiver.isEnabled(this));
+    autoStart.setOnCheckedChangeListener(
+        (button, checked) -> BootReceiver.setEnabled(this, checked));
+    startup.addView(autoStart, new LinearLayout.LayoutParams(-1, dp(56)));
+    startup.addView(text(getString(R.string.auto_start_explanation), 14));
     LinearLayout permissions = card(settings);
     permissions.addView(text(getString(R.string.root_hint), 16));
     rootState = text(getString(R.string.root_checking), 16);

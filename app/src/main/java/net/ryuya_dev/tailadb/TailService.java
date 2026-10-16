@@ -22,12 +22,12 @@ public final class TailService extends Service {
         () -> {
           try {
             if (restart) {
-              runCommand(true);
+              runBackendCommand(this, true);
               Thread.sleep(300);
               State.set(this, "STARTING", "");
-              runCommand(false);
+              runBackendCommand(this, false);
             } else {
-              runCommand(stop);
+              runBackendCommand(this, stop);
             }
             Thread.sleep(300);
             refreshState(this);
@@ -45,8 +45,13 @@ public final class TailService extends Service {
     return "'" + text.replace("'", "'\\''") + "'";
   }
 
-  private void runCommand(boolean stop) throws Exception {
-    String folder = getApplicationInfo().nativeLibraryDir;
+  static void runBackendCommand(android.content.Context context, boolean stop) throws Exception {
+    runBackendCommand(context, stop, 30);
+  }
+
+  static void runBackendCommand(
+      android.content.Context context, boolean stop, long timeoutSeconds) throws Exception {
+    String folder = context.getApplicationInfo().nativeLibraryDir;
     File helper = new File(folder, "libtailadb_exec.so");
     if (!helper.canExecute()) throw new IOException("Missing native backend");
     String command;
@@ -57,7 +62,7 @@ public final class TailService extends Service {
       File shim = new File(folder, "libtailadb_policy.so");
       File su = new File(folder, "libtailadb_su.so");
       if (!shim.isFile() || !su.canExecute()) throw new IOException("Missing native policy");
-      var settings = getSharedPreferences("settings", MODE_PRIVATE);
+      var settings = context.getSharedPreferences("settings", MODE_PRIVATE);
       int port = settings.getInt("port", 5555);
       String allowed = settings.getString("allowed_hosts", "");
       command =
@@ -76,8 +81,8 @@ public final class TailService extends Service {
     }
     java.lang.Process process =
         new ProcessBuilder("su", "-c", command).redirectErrorStream(true).start();
-    parse(process);
-    if (!process.waitFor(30, TimeUnit.SECONDS)) {
+    parse(context, process);
+    if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
       process.destroyForcibly();
       throw new IOException("Root command timeout");
     }
@@ -95,10 +100,6 @@ public final class TailService extends Service {
     } catch (Throwable error) {
       if (!running) State.set(context, "ERROR_ROOT", error.getClass().getSimpleName());
     }
-  }
-
-  private void parse(java.lang.Process process) throws IOException {
-    parse(this, process);
   }
 
   private static void parse(android.content.Context context, java.lang.Process process)

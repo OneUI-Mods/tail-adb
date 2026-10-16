@@ -23,6 +23,8 @@ export TAILADB_SIGNING_PROPERTIES=/absolute/path/to/private-signing.properties
 
 本体は通常のAndroidアプリです。Xposedは必要ありません。画面から開始すると短時間の通常Serviceがroot権限を要求し、native supervisorを独立プロセスとして起動して終了します。supervisorは状態ファイルと明示的なstart/stop/statusコマンドで管理するため、前景Serviceや常駐通知に依存しません。配布APKには自作のsupervisor、プロセス内の設定shim、制限付き `su` クライアントを含め、Samsungのadbdバイナリを含めません。
 
+自動起動の設定はdevice-protected storageにも保存します。`BOOT_COMPLETED` の受信後、BroadcastReceiverの短時間の非同期処理から既存のstartコマンドを呼びます。rootコマンドは8秒で打ち切り、root未導入・一時root消失・権限拒否時は `ERROR_AUTO_ROOT` を保存して終了します。再試行ループ、Foreground Service、常駐通知は使用しません。
+
 起動時に端末自身の `/apex/com.android.adbd/bin/adbd` を読み取り、検証済みハッシュと一致する場合だけroot所有のprivate作業ディレクトリへコピーします。APEXのリンカー領域が外部shimのロードを許可しないため、コピーだけを通常のリンカー領域で動かし、APEXの共有ライブラリは読み取り参照します。元ファイル、system/vendor/product/boot、システムのプロパティ領域、root実装は変更しません。
 
 root側からConnectivityServiceの現在のVPN情報を読み、Tailscaleのパッケージ名・実際の所有UID・インターフェース・CGNAT /32アドレスを確認します。曖昧な構造や複数候補は拒否します。別プロファイルのVPNも、rootから取得した実際のUIDとネットワークハンドルで扱います。単にtun0や100.xという名前・アドレスだけでは信用しません。

@@ -34,6 +34,7 @@ final class State {
     return switch (state) {
       case "LISTENING" -> R.string.state_listening;
       case "STARTING" -> R.string.state_starting;
+      case "AUTO_STARTING" -> R.string.state_auto_starting;
       case "STOPPING" -> R.string.state_stopping;
       case "WAITING_TAILSCALE" -> R.string.state_waiting;
       case "RETRYING" -> R.string.state_retrying;
@@ -44,6 +45,7 @@ final class State {
       case "ERROR_CRASH_LOOP" -> R.string.state_crashes;
       case "ERROR_ALREADY_RUNNING" -> R.string.state_running;
       case "ERROR_BROKER", "ERROR_CONTROL" -> R.string.state_security;
+      case "ERROR_AUTO_ROOT" -> R.string.state_auto_root;
       case "STOPPED" -> R.string.state_stopped;
       default -> R.string.state_error;
     };
