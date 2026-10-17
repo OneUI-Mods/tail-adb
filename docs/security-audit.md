@@ -1,34 +1,58 @@
 # セキュリティ監査
 
-## 対象
+## 対象と脅威モデル
 
-2026-10-16に、Tail ADB 0.1.0、Galaxy S26 Ultra SM-S948Q、Android 16、ビルド `BP4A.251205.006.S948QOPS1AZHL`、端末内adbd SHA-256 `459d1f67760789bdf8eb5a7a5c1bbe409d5dd3837d408ce4d7d14e496fcb8cbb` を対象に確認しました。ネットワーク境界、ADB認証、Linux資格情報、SELinux、プロセス・namespace・FD分離、Androidアプリの公開面、ビルド依存関係を調べています。
+2026-10-17にTail ADB 0.2.1を、Galaxy S26 Ultra SM-S948Q、Android 16、One UI 8.0、ビルド`BP4A.251205.006.S948QOPS1AZHL`で監査・実機検証しました。
 
-## 重大な検出事項
+攻撃者として、同じtailnetから端末の待受へ到達できる未許可ホスト、ADB秘密鍵を持つがアプリでroot許可されていないホスト、接続中shellからroot管理実装へ直接到達しようとする利用者、壊れた設定値や予期しない制御メッセージを想定しています。端末のroot管理実装そのもの、Tailscaleアプリ、tailnet管理者が侵害された場合は保護範囲外です。
 
-0.1.0の追加adbdはUID/GID 2000、effective capabilityなしでしたが、SELinux contextが `u:r:ksu:s0` のままでした。このroot管理用ドメインは端末上でpermissiveに設定されており、認証済みTail ADB shellから `su -c id` と `su 0 id` が追加確認なしにUID 0で成功しました。
+## 旧版で確認した重大な問題
 
-影響は、Androidが既に承認したADB秘密鍵を持ち、Tailscale ACL上で端末の待受へ到達できるホストが、アプリ側の許可なしにrootを取得できることです。Tailscale bindとADB RSA認証は外部到達範囲を狭めますが、root昇格の認可にはなりません。0.1.0はこの用途ではfail-openでした。
+0.1.0の追加adbdはUID/GID 2000、effective capabilityなしでしたが、SELinux contextが`u:r:ksu:s0`のままでした。このroot管理用ドメインは実機でpermissiveになっており、認証済みADB shellからアプリ側の追加許可なしに`su -c id`でUID 0へ昇格できました。0.1.0はroot境界がfail-openだったため使用しないでください。
 
-## 0.2.0の修正設計
+## 0.2.1の認可モデル
 
-- 追加adbdをroot管理の `ksu` ドメインからAndroid標準の `adbd` ドメインへ移し、UID/GID 2000、capabilityなし、`u:r:adbd:s0` を確認してからacceptします。
-- AOSP SELinuxポリシーの `adbd` から `shell` への遷移を使い、通常コマンドを `u:r:shell:s0` で実行します。
-- 同時ADBトランスポートを1つに限定し、acceptしたTailscale IPv4と256-bitのランダムなセッショントークンを対応付けます。
-- mount namespace内で検出した既存 `su` パスを同梱クライアントへ差し替えます。PATH名と絶対パスのどちらでもroot管理側へ直接到達させません。
-- root brokerは、アプリの許可IPリスト、現在の接続元IP、セッショントークン、peer UID/GID 2000、SELinux `u:r:shell:s0`、SCM_RIGHTSで受けた3つの標準入出力FDを検査します。
-- 制御FDとlistenerの `FD_CLOEXEC` は設定結果を読み戻します。SELinux API、資格情報、capability、親PID、制御メッセージ長、ancillary data、broker timeoutのいずれかが不明なら停止または拒否します。
-- 常駐通知付きForeground Serviceを廃止し、root所有supervisorを明示的なstart/stop/status操作で管理します。
+認可を2段階に分離しました。
 
-## 維持される境界
+1. shell許可：acceptした接続元がアプリで許可したTailscale CGNAT IPv4と一致する場合だけ、その接続のADB公開鍵をセッション内で承認します。公開鍵をAndroidのシステム鍵ストアへ保存しません。
+2. root許可：shell許可の部分集合です。接続元IP、256-bitセッショントークン、UID/GID 2000、SELinux`u:r:shell:s0`、標準入出力FDの整合性がすべて一致した場合だけ、起動時からUID 0を維持するroot brokerがコマンドを実行します。
 
-listenerは検証したTailscale VPNの実所有UID、ネットワークハンドル、UP状態のインターフェース、CGNAT /32を照合し、`SO_BINDTODEVICE`、`android_setsocknetwork()`、IP指定bindをすべて適用します。追加adbdは別network namespaceに入り、作成済みlistenerだけを継承します。Androidの既存ワイヤレスデバッグ、システムプロパティ、system/vendor/product/boot、ADB承認キーは変更しません。
+root許可だけが残る壊れた設定はネイティブsupervisorが起動前に拒否します。UIでもrootを有効にするとshellを有効化し、shellを無効にするとrootを失効します。
 
-ADB接続ではAndroid既存のRSA承認キーを利用します。root許可リストはその上に加える第2の認可です。ADBキーを持たないホストはshellへ入れず、ADBキーだけを持つ未許可ホストはshellまで、ADBキーと許可Tailscale IPの両方が一致したホストだけが `su` を利用できます。
+## 実装した防御
 
-## 残る制約
+- listenerを検証済みTailscale VPNの所有UID、network handle、UP状態のインターフェース、CGNAT /32へ照合。
+- `SO_BINDTODEVICE`、`android_setsocknetwork()`、IP指定bindを同時に適用。
+- 追加adbdを別network namespaceへ入れ、作成済みlistener以外のネットワーク待受を作れない構成。
+- 追加adbdを`u:r:ksu:s0`から`u:r:adbd:s0`へ移し、UID/GID 2000、capability 0を親から再確認。通常コマンドはAndroid標準遷移により`u:r:shell:s0`で実行。
+- supervisorをKernelSUの`su --ksu-no-new-privs`で起動し、その子孫がKernelSU経由で再昇格できない状態を継承。追加adbdとshellはUID/GID 2000を保つ一方、`/system/bin/su`を直接実行してもUID 2000のままです。root許可時の昇格だけを、別経路の制限付き`su`クライアントとroot brokerで行います。
+- 単一トランスポート制限、ランダムセッショントークン、SCM_CREDENTIALS、SCM_RIGHTS、メッセージ長、余分なancillary data、FD有効性を検証。
+- 制御FDとlistenerの`FD_CLOEXEC`を設定後に読み戻し。Samsung adbdのtransport登録に合わせ、accept済みsocketを衝突しない高位FDへ複製。
+- bionicのfdsan close経路も捕捉し、切断時に接続元とセッショントークンを確実に消去。
+- adbdと`libadbd_auth.so`をSHA-256で固定し、未知のOS実装では起動拒否。
+- root supervisorのPID、UID、lock FDを停止操作で照合し、別プロセスを誤停止しない設計。
+- 子adbdの異常終了が3回続いた場合に停止。root取得・自動起動の無限再試行なし。
+- アプリcomponentはランチャーActivity以外を非exported化。バックアップ無効。常駐Foreground Serviceと通知を不使用。
 
-- root管理実装そのもの、Tailscaleアプリ・tailnet ACL、既に承認済みのADB秘密鍵が侵害されていないことを前提とします。
-- 許可は現在のTailscale IPv4に対して行います。IPの再割当て時は許可リストを見直す必要があります。
-- 検証済みadbdの完全一致ハッシュだけを受け付けます。OS更新後は新しい実装でSELinux遷移とshell生成経路を再監査するまで開始しません。
-- 0.2.0の修正はreleaseビルドと静的検査を通過していますが、実機結果は[検証記録](testing.md)の必須項目が完了するまで未検証として扱います。
+## 実機で確認した結果
+
+- 未許可ホスト：ADBは`unauthorized`、shell実行不可。
+- shell許可後：`uid=2000(shell)`、`u:r:shell:s0`。
+- root未許可：PATH上の同梱`su`は拒否。`/system/bin/su -c id`を直接実行しても`uid=2000(shell)`のままで再昇格しないことを確認。
+- root許可後：`su -c id`が`uid=0(root)`、`u:r:ksu:s0`。
+- root失効後：shellは維持、`su`だけ拒否。
+- shell失効後：rootも消え、再接続は`unauthorized`。
+- 端末のLAN IPv4の同ポート：接続拒否。listenerはTailscaleインターフェースだけで待受。
+- 許可済みホスト一覧と現在接続元の両方から、shell/rootトグルが同じ権限状態を更新。
+- リリースビルド、release Lint、署名、`debuggable=false`を確認。
+
+## 残るリスクと制約
+
+- 許可単位はTailscale IPv4です。tailnetでIPを再割当てした場合は許可一覧を見直してください。
+- ADB TCP自体の保護はTailscaleの暗号化とACLに依存します。Tailscale外へlistenerを公開しない設計ですが、tailnet側の設定も適切に管理する必要があります。
+- root隔離はKernelSUの`--ksu-no-new-privs`の意味と継承動作に依存します。未対応の`su`では起動コマンドが失敗し、待受を開始しません。root管理実装がこの制約を破る変更を受けた場合は再監査が必要です。
+- 対応OSはバイナリ完全一致で限定しています。OS更新後はハッシュ追加だけで済ませず、認証callback、SELinux遷移、transport close、shell生成経路を再検証する必要があります。
+- 通常起動・ソフトリブートを伴う自動起動の実機試験は、無断再起動を避けるため今回実施していません。
+- すべてのADBサブコマンド、複数端末からの競合、長時間Dozeは未網羅です。
+
+ログは公開鍵本文、秘密鍵、セッショントークンを出力しません。認証結果、接続元Tailscale IP、検証失敗の要約は`TailAdbPolicy`と`TailAdbSupervisor`タグで確認できます。

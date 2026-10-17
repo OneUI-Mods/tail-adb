@@ -64,7 +64,10 @@ public final class TailService extends Service {
       if (!shim.isFile() || !su.canExecute()) throw new IOException("Missing native policy");
       var settings = context.getSharedPreferences("settings", MODE_PRIVATE);
       int port = settings.getInt("port", 5555);
-      String allowed = settings.getString("allowed_hosts", "");
+      int currentUser = android.os.Process.myUid() / 100000;
+      int selectedUser = settings.getInt("tailscale_user", currentUser);
+      String shellAllowed = settings.getString("shell_hosts", "");
+      String rootAllowed = settings.getString("allowed_hosts", "");
       command =
           "exec "
               + quote(helper.getAbsolutePath())
@@ -77,10 +80,18 @@ public final class TailService extends Service {
               + " "
               + port
               + " "
-              + quote(allowed == null ? "" : allowed);
+              + selectedUser
+              + " "
+              + quote(shellAllowed == null ? "" : shellAllowed)
+              + " "
+              + quote(rootAllowed == null ? "" : rootAllowed);
     }
     java.lang.Process process =
-        new ProcessBuilder("su", "-c", command).redirectErrorStream(true).start();
+        (stop
+                ? new ProcessBuilder("su", "-c", command)
+                : new ProcessBuilder("su", "--ksu-no-new-privs", "-c", command))
+            .redirectErrorStream(true)
+            .start();
     parse(context, process);
     if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
       process.destroyForcibly();
@@ -113,13 +124,12 @@ public final class TailService extends Service {
         if (fields.length < 2 || !fields[1].matches("[A-Z_]{2,40}")) continue;
         if (fields[1].equals("PEER")) {
           String[] peer = fields.length > 2 ? fields[2].split("\t", 2) : new String[0];
-          State.setPeer(
-              context,
-              peer.length > 0 ? peer[0] : "",
-              peer.length > 1 && peer[1].equals("ALLOWED"));
+          State.setPeer(context, peer.length > 0 ? peer[0] : "");
         } else if (fields[1].equals("PEER_CLOSED")) {
-          State.setPeer(context, "", false);
+          State.setPeer(context, "");
         } else {
+          if (fields[1].equals("STOPPED") || fields[1].startsWith("ERROR_") ||
+              fields[1].startsWith("WAITING_")) State.setPeer(context, "");
           State.set(context, fields[1], fields.length > 2 ? fields[2] : "");
         }
       }

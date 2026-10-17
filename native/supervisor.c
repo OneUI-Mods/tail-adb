@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ryuya0124
 
 #define _GNU_SOURCE
+#include <android/log.h>
 #include <android/multinetwork.h>
 #include <arpa/inet.h>
 #include <dirent.h>
@@ -37,12 +38,17 @@
 #define TOKEN_BYTES 32
 #define MAX_REQUEST 4096
 #define MAX_ALLOWED 32
+#define MAX_VPN_CANDIDATES 8
+#define LOG_TAG "TailAdbSupervisor"
+#define BROKER_WARN(...) \
+  __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
 enum control_type {
   CONTROL_READY = 1,
   CONTROL_CONNECTED = 2,
   CONTROL_CLOSED = 3,
-  CONTROL_BROKER = 4
+  CONTROL_BROKER = 4,
+  CONTROL_FAILURE = 5
 };
 struct control_message {
   uint32_t type;
@@ -67,7 +73,19 @@ struct vpn {
   unsigned index;
   unsigned uid;
 };
+struct vpn_scan {
+  struct vpn candidates[MAX_VPN_CANDIDATES];
+  size_t count;
+};
+enum vpn_result {
+  VPN_UNAVAILABLE,
+  VPN_READY,
+  VPN_OTHER_USER,
+  VPN_AMBIGUOUS,
+  VPN_INSPECTION_ERROR
+};
 static volatile sig_atomic_t stopped;
+static bool terminal_error;
 static char status_path[PATH_MAX];
 static char peer_path[PATH_MAX];
 static void secure_zero(void *memory, size_t length) {
@@ -80,6 +98,8 @@ static void stop_signal(int signal) {
   stopped = 1;
 }
 static void event(const char *state, const char *detail) {
+  if (!strncmp(state, "ERROR_", 6))
+    terminal_error = true;
   printf("TAILADB\t%s\t%s\n", state, detail ? detail : "");
   fflush(stdout);
   if (!*status_path)
@@ -132,10 +152,32 @@ static bool package_uid(unsigned uid) {
   }
   return pclose(f) == 0 && good;
 }
-static bool vpn_info(struct vpn *out) {
+static bool same_vpn(const struct vpn *left, const struct vpn *right) {
+  return left->handle == right->handle && left->uid == right->uid &&
+         left->index == right->index && !strcmp(left->ip, right->ip) &&
+         !strcmp(left->iface, right->iface);
+}
+
+static void vpn_detail(const struct vpn_scan *scan, unsigned user_id,
+                       char *detail, size_t size) {
+  int used = snprintf(detail, size, "%u", user_id);
+  if (used < 0 || (size_t)used >= size)
+    return;
+  for (size_t i = 0; i < scan->count; i++) {
+    const struct vpn *v = &scan->candidates[i];
+    int written = snprintf(detail + used, size - (size_t)used, "\t%u,%s,%s",
+                           v->uid / 100000, v->ip, v->iface);
+    if (written < 0 || (size_t)written >= size - (size_t)used)
+      return;
+    used += written;
+  }
+}
+
+static enum vpn_result vpn_info(struct vpn *out, unsigned user_id,
+                                struct vpn_scan *scan) {
   FILE *f = popen("/system/bin/dumpsys connectivity", "r");
   if (!f)
-    return false;
+    return VPN_INSPECTION_ERROR;
   char *line = NULL;
   size_t cap = 0;
   int matches = 0;
@@ -154,6 +196,8 @@ static bool vpn_info(struct vpn *out) {
     if (sscanf(iface, "InterfaceName: %15s", v.iface) != 1 ||
         sscanf(handle, "handle{%llu}", &h) != 1 ||
         sscanf(owner, "OwnerUid: %u", &v.uid) != 1)
+      continue;
+    if (!package_uid(v.uid))
       continue;
     // Only a Tailscale CGNAT /32 address in the LinkAddresses list is accepted.
     const char *p = ips + strlen("LinkAddresses: [ ");
@@ -180,16 +224,36 @@ static bool vpn_info(struct vpn *out) {
     if (!found || !safe_iface(v.iface) || !(v.index = if_nametoindex(v.iface)))
       continue;
     v.handle = h;
+    bool duplicate = false;
+    for (size_t i = 0; i < scan->count; i++)
+      if (same_vpn(&scan->candidates[i], &v))
+        duplicate = true;
+    if (duplicate)
+      continue;
+    if (scan->count >= MAX_VPN_CANDIDATES) {
+      free(line);
+      pclose(f);
+      return VPN_INSPECTION_ERROR;
+    }
+    scan->candidates[scan->count++] = v;
+    // dumpsys includes VPNs from every running Android user/profile. Only the
+    // user selected in Tail ADB may supply the listener network.
+    if (v.uid / 100000 != user_id)
+      continue;
     candidate = v;
     matches++;
   }
   free(line);
   int rc = pclose(f);
-  if (rc || matches != 1 || !package_uid(candidate.uid))
-    return false;
+  if (rc)
+    return VPN_INSPECTION_ERROR;
+  if (!matches)
+    return scan->count ? VPN_OTHER_USER : VPN_UNAVAILABLE;
+  if (matches != 1)
+    return VPN_AMBIGUOUS;
   struct ifaddrs *all = NULL;
   if (getifaddrs(&all))
-    return false;
+    return VPN_INSPECTION_ERROR;
   bool exists = false;
   for (struct ifaddrs *i = all; i; i = i->ifa_next)
     if (i->ifa_addr && i->ifa_addr->sa_family == AF_INET &&
@@ -202,20 +266,24 @@ static bool vpn_info(struct vpn *out) {
     }
   freeifaddrs(all);
   if (!exists)
-    return false;
+    return VPN_INSPECTION_ERROR;
   *out = candidate;
-  return true;
+  return VPN_READY;
 }
 static bool supported_daemon(void) {
-  FILE *f = popen("/system/bin/sha256sum /apex/com.android.adbd/bin/adbd", "r");
+  FILE *f = popen("/system/bin/sha256sum /apex/com.android.adbd/bin/adbd "
+                  "/system/lib64/libadbd_auth.so", "r");
   if (!f)
     return false;
-  char hash[65] = {0};
-  bool good =
-      fscanf(f, "%64s", hash) == 1 &&
-      !strcmp(
-          hash,
-          "459d1f67760789bdf8eb5a7a5c1bbe409d5dd3837d408ce4d7d14e496fcb8cbb");
+  char adbd[65] = {0}, auth[65] = {0}, path[PATH_MAX] = {0};
+  bool good = fscanf(f, "%64s %1023s", adbd, path) == 2 &&
+              !strcmp(path, "/apex/com.android.adbd/bin/adbd") &&
+              fscanf(f, "%64s %1023s", auth, path) == 2 &&
+              !strcmp(path, "/system/lib64/libadbd_auth.so") &&
+              !strcmp(adbd,
+                      "459d1f67760789bdf8eb5a7a5c1bbe409d5dd3837d408ce4d7d14e496fcb8cbb") &&
+              !strcmp(auth,
+                      "d078a2db5dcfafa23c2fa6629b28fe9c673ec57b103fb396e7b8f16763329a2f");
   return pclose(f) == 0 && good;
 }
 static int copy_daemon(const char *destination) {
@@ -329,32 +397,51 @@ static bool host_allowed(const struct authorization *authorization,
   return false;
 }
 
-static int mask_su(const char *wrapper) {
+static bool set_socket_creation_context(const char *context) {
+  int fd = open("/proc/thread-self/attr/sockcreate",
+                O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0)
+    return false;
+  size_t size = context ? strlen(context) + 1 : 1;
+  const char empty = 0;
+  const char *value = context ? context : &empty;
+  ssize_t written;
+  do {
+    written = write(fd, value, size);
+  } while (written < 0 && errno == EINTR);
+  int saved = errno;
+  close(fd);
+  errno = saved;
+  return written == (ssize_t)size;
+}
+
+static int enter_clean_mount_namespace(void) {
+  int initial = open("/proc/1/ns/mnt", O_RDONLY | O_CLOEXEC);
+  if (initial < 0)
+    return 1;
+  if (setns(initial, CLONE_NEWNS)) {
+    close(initial);
+    return 2;
+  }
+  close(initial);
+  if (unshare(CLONE_NEWNS))
+    return 3;
   if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL))
-    return -1;
-  const char *targets[] = {"/system/bin/su",      "/system/xbin/su",
-                           "/sbin/su",            "/debug_ramdisk/su",
-                           "/data/adb/ksu/bin/su", "/data/adb/ap/bin/su"};
-  bool replaced = false;
-  for (size_t i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
-    struct stat st;
-    if (stat(targets[i], &st)) {
-      if (errno == ENOENT)
-        continue;
-      return -1;
-    }
-    if (!S_ISREG(st.st_mode) || mount(wrapper, targets[i], NULL, MS_BIND, NULL))
-      return -1;
-    replaced = true;
-  }
-  if (!replaced) {
-    errno = ENOENT;
-    return -1;
-  }
+    return 4;
   return 0;
 }
+
 static int secure_listener(const struct vpn *v, int port) {
+  if (!set_socket_creation_context("u:r:adbd:s0"))
+    return -1;
   int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  int socket_error = errno;
+  if (!set_socket_creation_context(NULL)) {
+    if (fd >= 0)
+      close(fd);
+    return -1;
+  }
+  errno = socket_error;
   if (fd < 0)
     return -1;
   int reuse = 1;
@@ -410,6 +497,61 @@ static void reap(pid_t child) {
   }
   kill(child, SIGKILL);
   waitpid(child, NULL, 0);
+}
+static bool child_ready(pid_t child, pid_t parent, int listener,
+                        const char *binary) {
+  char path[PATH_MAX], data[4096] = {0};
+  snprintf(path, sizeof(path), "/proc/%ld/status", (long)child);
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  ssize_t length = fd >= 0 ? read(fd, data, sizeof(data) - 1) : -1;
+  if (fd >= 0)
+    close(fd);
+  char parent_line[64];
+  snprintf(parent_line, sizeof(parent_line), "\nPPid:\t%ld\n", (long)parent);
+  if (length <= 0 || !strstr(data, "\nUid:\t2000\t2000\t2000\t2000\n") ||
+      !strstr(data, "\nGid:\t2000\t2000\t2000\t2000\n") ||
+      !strstr(data, "\nCapInh:\t0000000000000000\n") ||
+      !strstr(data, "\nCapPrm:\t0000000000000000\n") ||
+      !strstr(data, "\nCapEff:\t0000000000000000\n") || !strstr(data, parent_line))
+    return false;
+  snprintf(path, sizeof(path), "/proc/%ld/attr/current", (long)child);
+  fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  memset(data, 0, sizeof(data));
+  length = fd >= 0 ? read(fd, data, sizeof(data) - 1) : -1;
+  if (fd >= 0)
+    close(fd);
+  if (length <= 0 || strcmp(data, "u:r:adbd:s0"))
+    return false;
+  snprintf(path, sizeof(path), "/proc/%ld/exe", (long)child);
+  char executable[PATH_MAX] = {0};
+  length = readlink(path, executable, sizeof(executable) - 1);
+  if (length <= 0 || strcmp(executable, binary))
+    return false;
+  struct stat expected;
+  if (fstat(listener, &expected) || !S_ISSOCK(expected.st_mode))
+    return false;
+  snprintf(path, sizeof(path), "/proc/%ld/fd", (long)child);
+  DIR *directory = opendir(path);
+  if (!directory)
+    return false;
+  bool found = false;
+  struct dirent *entry;
+  while ((entry = readdir(directory))) {
+    char *end = NULL;
+    strtol(entry->d_name, &end, 10);
+    if (*end)
+      continue;
+    char descriptor[PATH_MAX];
+    if (snprintf(descriptor, sizeof(descriptor), "%s/%s", path, entry->d_name) >=
+        (int)sizeof(descriptor))
+      continue;
+    struct stat actual;
+    if (!stat(descriptor, &actual) && actual.st_dev == expected.st_dev &&
+        actual.st_ino == expected.st_ino && S_ISSOCK(actual.st_mode))
+      found = true;
+  }
+  closedir(directory);
+  return found;
 }
 static void close_except(const int *keep, size_t count) {
   DIR *directory = opendir("/proc/self/fd");
@@ -582,10 +724,11 @@ static void broker_session(int client, bool allowed,
       }
     }
     struct request *request = (struct request *)buffer;
+    bool shell_context = have_credentials && shell_process(credentials.pid);
     bool trusted =
         allowed && !(message.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) && !extra &&
         have_streams && have_credentials && credentials.uid == 2000 &&
-        credentials.gid == 2000 && shell_process(credentials.pid) &&
+        credentials.gid == 2000 && shell_context &&
         received >= (ssize_t)sizeof(*request) && request->bytes <= MAX_REQUEST &&
         request->argc <= 128 &&
         received == (ssize_t)(sizeof(*request) + request->bytes) &&
@@ -594,6 +737,15 @@ static void broker_session(int client, bool allowed,
       if (streams[i] < 0 || fcntl(streams[i], F_GETFD) < 0)
         trusted = false;
     if (!trusted) {
+      BROKER_WARN(
+          "root request denied policy=%d trunc=%d extra=%d streams=%d "
+          "credentials=%d uid=%u gid=%u shell_context=%d size=%zd argc=%u "
+          "bytes=%u",
+          allowed, !!(message.msg_flags & (MSG_CTRUNC | MSG_TRUNC)), extra,
+          have_streams, have_credentials, credentials.uid, credentials.gid,
+          shell_context, received,
+          received >= (ssize_t)sizeof(*request) ? request->argc : 0,
+          received >= (ssize_t)sizeof(*request) ? request->bytes : 0);
       uint8_t denied = 0;
       send(client, &denied, 1, MSG_NOSIGNAL);
       for (int i = 0; i < 3; i++)
@@ -754,8 +906,40 @@ int main(int argc, char **argv) {
     return status_backend(argv[2]);
   if (argc == 3 && !strcmp(argv[1], "--stop"))
     return stop_backend(argv[2]);
-  int argument = 1;
-  if (argc == 7 && !strcmp(argv[1], "--start")) {
+  bool daemonize = argc == 9 && !strcmp(argv[1], "--start");
+  int argument = daemonize ? 2 : 1;
+  if ((!daemonize && argc != 8) || (daemonize && argc != 9)) {
+    event("ERROR_ARGUMENT", "");
+    return 2;
+  }
+  if (!supported_daemon()) {
+    event("ERROR_COMPAT", "");
+    return 1;
+  }
+  const char *shim = argv[argument], *su_source = argv[argument + 1],
+             *directory = argv[argument + 2];
+  char *end;
+  long port = strtol(argv[argument + 3], &end, 10);
+  char *user_end;
+  long user_id = strtol(argv[argument + 4], &user_end, 10);
+  struct authorization shell_authorization = {0};
+  struct authorization root_authorization = {0};
+  if (*end || *user_end || port < 1024 || port > 65535 || user_id < 0 ||
+      user_id > 21474 || strlen(directory) > 300 ||
+      strlen(shim) > 500 || strlen(su_source) > 500 ||
+      !parse_authorization(argv[argument + 5], &shell_authorization) ||
+      !parse_authorization(argv[argument + 6], &root_authorization)) {
+    event("ERROR_ARGUMENT", "");
+    return 2;
+  }
+  for (size_t i = 0; i < root_authorization.count; i++) {
+    if (!host_allowed(&shell_authorization,
+                      root_authorization.addresses[i].s_addr)) {
+      event("ERROR_ARGUMENT", "");
+      return 2;
+    }
+  }
+  if (daemonize) {
     pid_t daemon = fork();
     if (daemon < 0) {
       event("ERROR_FORK", "");
@@ -773,25 +957,6 @@ int main(int argc, char **argv) {
       return 1;
     if (null > STDERR_FILENO)
       close(null);
-    argument = 2;
-  } else if (argc != 6) {
-    event("ERROR_ARGUMENT", "");
-    return 2;
-  }
-  if (!supported_daemon()) {
-    event("ERROR_COMPAT", "");
-    return 1;
-  }
-  const char *shim = argv[argument], *su_source = argv[argument + 1],
-             *directory = argv[argument + 2];
-  char *end;
-  long port = strtol(argv[argument + 3], &end, 10);
-  struct authorization authorization = {0};
-  if (*end || port < 1024 || port > 65535 || strlen(directory) > 300 ||
-      strlen(shim) > 500 || strlen(su_source) > 500 ||
-      !parse_authorization(argv[argument + 4], &authorization)) {
-    event("ERROR_ARGUMENT", "");
-    return 2;
   }
   if (mkdir(directory, 0711) && errno != EEXIST) {
     event("ERROR_STORAGE", "");
@@ -862,10 +1027,14 @@ int main(int argc, char **argv) {
   unsigned attempts = 0;
   int failures = 0;
   char last_state[32] = "";
+  char last_detail[768] = "";
   while (!stopped) {
     if (needs_check) {
       struct vpn next = {0};
-      bool available = vpn_info(&next);
+      struct vpn_scan scan = {0};
+      enum vpn_result vpn_state =
+          vpn_info(&next, (unsigned)user_id, &scan);
+      bool available = vpn_state == VPN_READY;
       if (child && (!available || strcmp(next.ip, current.ip) ||
                     next.index != current.index ||
                     next.handle != current.handle || next.uid != current.uid)) {
@@ -883,9 +1052,20 @@ int main(int argc, char **argv) {
         memset(&current, 0, sizeof(current));
       }
       if (!available) {
-        if (strcmp(last_state, "WAITING_TAILSCALE")) {
-          event("WAITING_TAILSCALE", "");
-          strcpy(last_state, "WAITING_TAILSCALE");
+        char detail[768] = {0};
+        vpn_detail(&scan, (unsigned)user_id, detail, sizeof(detail));
+        const char *state =
+            vpn_state == VPN_OTHER_USER
+                ? "WAITING_SELECTED_USER"
+                : vpn_state == VPN_AMBIGUOUS
+                      ? "WAITING_MULTIPLE_TAILSCALE"
+                      : vpn_state == VPN_INSPECTION_ERROR
+                            ? "WAITING_NETWORK_INSPECTION"
+                            : "WAITING_TAILSCALE";
+        if (strcmp(last_state, state) || strcmp(last_detail, detail)) {
+          event(state, detail);
+          strcpy(last_state, state);
+          strcpy(last_detail, detail);
         }
       } else if (!child && failures < 3) {
         listener = secure_listener(&next, port);
@@ -907,8 +1087,22 @@ int main(int argc, char **argv) {
           pid_t parent = getppid();
           if (prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent)
             _exit(122);
-          if (unshare(CLONE_NEWNET | CLONE_NEWNS) || mask_su(su_wrapper))
+          int mount_result = enter_clean_mount_namespace();
+          if (mount_result) {
+            struct control_message failure = {
+                .type = CONTROL_FAILURE,
+                .peer = ((unsigned)mount_result << 16) |
+                        (unsigned)(errno & 0xffff)};
+            send(control_pair[1], &failure, sizeof(failure), MSG_NOSIGNAL);
             _exit(123);
+          }
+          if (unshare(CLONE_NEWNET)) {
+            struct control_message failure = {
+                .type = CONTROL_FAILURE,
+                .peer = (6U << 16) | (unsigned)(errno & 0xffff)};
+            send(control_pair[1], &failure, sizeof(failure), MSG_NOSIGNAL);
+            _exit(124);
+          }
           close_unrelated(listener, control_pair[1]);
           int devnull = open("/dev/null", O_RDONLY);
           if (devnull < 0)
@@ -934,11 +1128,13 @@ int main(int argc, char **argv) {
           setenv("TAILADB_CONTROL_FD", controlfd, 1);
           setenv("TAILADB_IP", next.ip, 1);
           setenv("TAILADB_PORT", number, 1);
+          setenv("TAILADB_SU_DIR", directory, 1);
+          setenv("TAILADB_ALLOWED_SHELL", argv[argument + 5], 1);
           setenv("LD_PRELOAD", shim, 1);
           setenv("LD_LIBRARY_PATH",
                  "/apex/com.android.adbd/lib64:/system/lib64", 1);
           unsetenv("ANDROID_SOCKET_adbd");
-          setenv("ANDROID_LOG_TAGS", "*:w", 1);
+          setenv("ANDROID_LOG_TAGS", "*:i", 1);
           execl(binary, "tailadb-adbd", NULL);
           _exit(125);
         }
@@ -953,16 +1149,43 @@ int main(int argc, char **argv) {
         control = control_pair[0];
         struct pollfd ready = {.fd = control, .events = POLLIN};
         struct control_message message = {0};
-        if (poll(&ready, 1, 3000) <= 0 ||
-            recv(control, &message, sizeof(message), 0) != sizeof(message) ||
-            message.type != CONTROL_READY) {
-          reap(child);
+        int ready_result = poll(&ready, 1, 1000);
+        ssize_t ready_size =
+            ready_result > 0 ? recv(control, &message, sizeof(message), 0) : -1;
+        bool verified_ready =
+            !ready_result && child_ready(child, getpid(), listener, binary);
+        if (!verified_ready &&
+            (ready_result <= 0 || ready_size != sizeof(message) ||
+             message.type != CONTROL_READY)) {
+          int child_status = 0;
+          pid_t waited = waitpid(child, &child_status, WNOHANG);
+          if (!waited) {
+            kill(child, SIGTERM);
+            for (int i = 0; i < 20 && !waited; i++) {
+              usleep(50000);
+              waited = waitpid(child, &child_status, WNOHANG);
+            }
+          }
+          if (!waited) {
+            kill(child, SIGKILL);
+            do {
+              waited = waitpid(child, &child_status, 0);
+            } while (waited < 0 && errno == EINTR);
+          }
           child = 0;
           close(listener);
           listener = -1;
           close(control);
           control = -1;
-          event("ERROR_ISOLATION", "");
+          char detail[64] = "control_ready_failed";
+          if (ready_size == sizeof(message) && message.type == CONTROL_FAILURE)
+            snprintf(detail, sizeof(detail), "stage_%u_errno_%u", message.peer >> 16,
+                     message.peer & 0xffff);
+          else if (waited > 0 && WIFEXITED(child_status))
+            snprintf(detail, sizeof(detail), "child_exit_%d", WEXITSTATUS(child_status));
+          else if (waited > 0 && WIFSIGNALED(child_status))
+            snprintf(detail, sizeof(detail), "child_signal_%d", WTERMSIG(child_status));
+          event("ERROR_ISOLATION", detail);
           break;
         }
         current = next;
@@ -972,6 +1195,7 @@ int main(int argc, char **argv) {
                  (unsigned long long)next.handle);
         event("LISTENING", info);
         strcpy(last_state, "LISTENING");
+        strcpy(last_detail, info);
       }
       needs_check = false;
     }
@@ -1070,7 +1294,12 @@ int main(int argc, char **argv) {
             header->cmsg_len == CMSG_LEN(sizeof(broker_client));
         if (valid_broker)
           memcpy(&broker_client, CMSG_DATA(header), sizeof(broker_client));
-        if (message.type == CONTROL_CONNECTED) {
+        if (message.type == CONTROL_READY) {
+          if (header) {
+            stopped = 1;
+            event("ERROR_CONTROL", "");
+          }
+        } else if (message.type == CONTROL_CONNECTED) {
           if (header) {
             stopped = 1;
             event("ERROR_CONTROL", "");
@@ -1083,8 +1312,11 @@ int main(int argc, char **argv) {
           inet_ntop(AF_INET, &current_peer, peer, sizeof(peer));
           char detail[64];
           snprintf(detail, sizeof(detail), "%s\t%s", peer,
-                   host_allowed(&authorization, current_peer) ? "ALLOWED"
-                                                              : "SHELL_ONLY");
+                   host_allowed(&root_authorization, current_peer)
+                       ? "ROOT"
+                       : host_allowed(&shell_authorization, current_peer)
+                             ? "SHELL"
+                             : "PENDING");
           event("PEER", detail);
         } else if (message.type == CONTROL_CLOSED) {
           if (header) {
@@ -1100,7 +1332,7 @@ int main(int argc, char **argv) {
                    session_active &&
                    constant_equal(message.token, current_token, TOKEN_BYTES)) {
           start_broker_session(
-              broker_client, host_allowed(&authorization, current_peer),
+              broker_client, host_allowed(&root_authorization, current_peer),
               current_token);
           broker_client = -1;
         } else {
@@ -1138,6 +1370,7 @@ int main(int argc, char **argv) {
   unlink(pidpath);
   unlink(binary);
   unlink(su_wrapper);
-  event("STOPPED", "");
+  if (!terminal_error)
+    event("STOPPED", "");
   return 0;
 }

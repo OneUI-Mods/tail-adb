@@ -16,16 +16,16 @@ final class State {
         .edit()
         .putString("state", value)
         .putString(
-            "detail", detail == null ? "" : detail.substring(0, Math.min(400, detail.length())))
+            "detail", detail == null ? "" : detail.substring(0, Math.min(1000, detail.length())))
         .apply();
     c.sendBroadcast(new Intent(ACTION).setPackage(c.getPackageName()));
   }
 
-  static void setPeer(Context c, String address, boolean allowed) {
+  static void setPeer(Context c, String address) {
     prefs(c)
         .edit()
         .putString("peer", address == null ? "" : address)
-        .putBoolean("peer_allowed", allowed)
+        .remove("peer_allowed")
         .apply();
     c.sendBroadcast(new Intent(ACTION).setPackage(c.getPackageName()));
   }
@@ -37,6 +37,9 @@ final class State {
       case "AUTO_STARTING" -> R.string.state_auto_starting;
       case "STOPPING" -> R.string.state_stopping;
       case "WAITING_TAILSCALE" -> R.string.state_waiting;
+      case "WAITING_SELECTED_USER" -> R.string.state_selected_user;
+      case "WAITING_MULTIPLE_TAILSCALE" -> R.string.state_multiple_tailscale;
+      case "WAITING_NETWORK_INSPECTION" -> R.string.state_network_inspection;
       case "RETRYING" -> R.string.state_retrying;
       case "ERROR_ROOT" -> R.string.state_root;
       case "ERROR_COMPAT" -> R.string.state_compat;

@@ -2,11 +2,13 @@
 // Copyright (c) 2026 ryuya0124
 
 #define _GNU_SOURCE
+#include <android/log.h>
 #include <arpa/inet.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/capability.h>
+#include <limits.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
@@ -19,12 +21,17 @@
 #include <sys/prctl.h>
 #include <sys/random.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/system_properties.h>
 #include <time.h>
 #include <unistd.h>
 
 #define TOKEN_BYTES 32
+#define MAX_ALLOWED 32
+#define LOG_TAG "TailAdbPolicy"
+#define AUTH_INFO(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define AUTH_WARN(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
 enum control_type {
   CONTROL_READY = 1,
@@ -52,9 +59,26 @@ static struct override props[] = {{"service.adb.listen_addrs", ""},
 static pid_t daemon_pid, parent_pid;
 static int inherited_fd = -1, control_fd = -1, active_fd = -1;
 static struct sockaddr_in endpoint;
+static struct in_addr allowed_shell[MAX_ALLOWED];
+static size_t allowed_shell_count;
+static uint32_t active_peer;
 static bool configured, ready_sent, token_valid;
+static unsigned next_transport_fd = 128;
 static uint8_t active_token[TOKEN_BYTES];
+static char shell_path[PATH_MAX + 160];
 static pthread_mutex_t session_lock = PTHREAD_MUTEX_INITIALIZER;
+
+struct local_auth_context {
+  uint32_t marker;
+};
+struct auth_callbacks_v1 {
+  uint32_t version;
+  void (*key_authorized)(void *opaque, uint64_t id);
+  void (*key_removed)(const char *public_key, size_t length);
+};
+static struct local_auth_context auth_context = {.marker = 0x54414442};
+static struct auth_callbacks_v1 auth_callbacks;
+static uint64_t next_auth_id = 1;
 
 static bool own_process(void) { return configured && getpid() == daemon_pid; }
 static void die(int code) { _exit(code); }
@@ -71,27 +95,303 @@ static void require_cloexec(int fd) {
     die(120);
 }
 
+static bool read_context(char *out, size_t size) {
+  int fd = open("/proc/thread-self/attr/current", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0)
+    return false;
+  ssize_t length;
+  do {
+    length = read(fd, out, size - 1);
+  } while (length < 0 && errno == EINTR);
+  int saved = errno;
+  close(fd);
+  errno = saved;
+  if (length <= 0 || (size_t)length >= size)
+    return false;
+  out[length] = 0;
+  while (length > 0 && (out[length - 1] == '\n' || out[length - 1] == 0))
+    out[--length] = 0;
+  return length > 0;
+}
+
+static bool write_context(const char *context) {
+  int fd = open("/proc/thread-self/attr/current", O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0)
+    return false;
+  size_t size = strlen(context) + 1;
+  ssize_t written;
+  do {
+    written = write(fd, context, size);
+  } while (written < 0 && errno == EINTR);
+  int saved = errno;
+  close(fd);
+  errno = saved;
+  return written == (ssize_t)size;
+}
+
 static void require_adbd_context(void) {
-  int (*getcon_fn)(char **) = dlsym(RTLD_NEXT, "getcon");
-  int (*setcon_fn)(const char *) = dlsym(RTLD_NEXT, "setcon");
-  void (*freecon_fn)(char *) = dlsym(RTLD_NEXT, "freecon");
-  if (!getcon_fn || !setcon_fn || !freecon_fn)
-    die(120);
-  char *context = NULL;
-  if (getcon_fn(&context) || !context)
+  char context[256] = {0};
+  if (!read_context(context, sizeof(context)))
     die(120);
   bool already = !strcmp(context, "u:r:adbd:s0");
   bool expected = !strcmp(context, "u:r:ksu:s0");
-  freecon_fn(context);
-  if (!already && (!expected || setcon_fn("u:r:adbd:s0")))
+  if (!already && (!expected || !write_context("u:r:adbd:s0")))
     die(120);
-  context = NULL;
-  if (getcon_fn(&context) || !context || strcmp(context, "u:r:adbd:s0")) {
-    if (context)
-      freecon_fn(context);
+  memset(context, 0, sizeof(context));
+  if (!read_context(context, sizeof(context)) || strcmp(context, "u:r:adbd:s0"))
     die(120);
+}
+
+static bool valid_key_character(char c) {
+  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+         (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=';
+}
+
+static bool parse_allowed_shell(const char *text) {
+  if (!text || strlen(text) > MAX_ALLOWED * INET_ADDRSTRLEN)
+    return false;
+  if (!*text)
+    return true;
+  const char *start = text;
+  while (*start) {
+    const char *end = strchr(start, ',');
+    size_t length = end ? (size_t)(end - start) : strlen(start);
+    if (!length || length >= INET_ADDRSTRLEN ||
+        allowed_shell_count >= MAX_ALLOWED)
+      return false;
+    char ip[INET_ADDRSTRLEN];
+    memcpy(ip, start, length);
+    ip[length] = 0;
+    struct in_addr address;
+    if (inet_pton(AF_INET, ip, &address) != 1 ||
+        (ntohl(address.s_addr) & 0xffc00000U) != 0x64400000U)
+      return false;
+    for (size_t i = 0; i < allowed_shell_count; i++)
+      if (allowed_shell[i].s_addr == address.s_addr)
+        return false;
+    allowed_shell[allowed_shell_count++] = address;
+    if (!end)
+      break;
+    start = end + 1;
   }
-  freecon_fn(context);
+  return true;
+}
+
+static bool shell_allowed(uint32_t peer) {
+  for (size_t i = 0; i < allowed_shell_count; i++)
+    if (allowed_shell[i].s_addr == peer)
+      return true;
+  return false;
+}
+
+static bool validate_key_line(const char *line, size_t length) {
+  if (!length || length > 4096 || memchr(line, 0, length) ||
+      memchr(line, '\r', length))
+    return false;
+  size_t key_length = 0;
+  while (key_length < length && line[key_length] != ' ' &&
+         line[key_length] != '\t')
+    key_length++;
+  if (key_length != 700)
+    return false;
+  for (size_t i = 0; i < key_length; i++)
+    if (!valid_key_character(line[i]) || (line[i] == '=' && i + 2 < key_length))
+      return false;
+  return true;
+}
+
+static bool load_authorized_keys(char **contents, size_t *length) {
+  *contents = NULL;
+  *length = 0;
+  int directory = open("/data/misc/adb",
+                       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+  if (directory < 0) {
+    AUTH_WARN("authorized keys: directory open failed errno=%d", errno);
+    return false;
+  }
+  struct stat directory_stat;
+  bool trusted = !fstat(directory, &directory_stat) &&
+                 S_ISDIR(directory_stat.st_mode) && directory_stat.st_uid == 1000 &&
+                 directory_stat.st_gid == 2000 && !(directory_stat.st_mode & 0027);
+  int fd = trusted ? openat(directory, "adb_keys", O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+                   : -1;
+  close(directory);
+  if (fd < 0) {
+    AUTH_WARN("authorized keys: trust/open failed errno=%d", errno);
+    return false;
+  }
+  struct stat before, after;
+  trusted = !fstat(fd, &before) && S_ISREG(before.st_mode) && before.st_uid == 1000 &&
+            before.st_gid == 2000 && !(before.st_mode & 0022) && before.st_size > 0 &&
+            before.st_size <= 262144;
+  char *data = trusted ? malloc((size_t)before.st_size + 1) : NULL;
+  size_t used = 0;
+  while (data && used < (size_t)before.st_size) {
+    ssize_t count = read(fd, data + used, (size_t)before.st_size - used);
+    if (count > 0)
+      used += (size_t)count;
+    else if (count < 0 && errno == EINTR)
+      continue;
+    else
+      break;
+  }
+  char extra;
+  ssize_t extra_size = data ? read(fd, &extra, 1) : -1;
+  trusted = data && used == (size_t)before.st_size && extra_size == 0 &&
+            !fstat(fd, &after) && before.st_dev == after.st_dev &&
+            before.st_ino == after.st_ino && before.st_size == after.st_size &&
+            before.st_mtime == after.st_mtime;
+  close(fd);
+  if (!trusted) {
+    AUTH_WARN("authorized keys: stable read or metadata validation failed");
+    free(data);
+    return false;
+  }
+  data[used] = 0;
+  size_t keys = 0, start = 0;
+  while (start < used) {
+    size_t end = start;
+    while (end < used && data[end] != '\n')
+      end++;
+    if (!validate_key_line(data + start, end - start) || ++keys > 128) {
+      AUTH_WARN("authorized keys: invalid line index=%zu length=%zu", keys + 1,
+                end - start);
+      secure_zero(data, used);
+      free(data);
+      return false;
+    }
+    start = end + 1;
+  }
+  *contents = data;
+  *length = used;
+  AUTH_INFO("authorized keys: loaded count=%zu bytes=%zu", keys, used);
+  return true;
+}
+
+void *adbd_auth_new(void *callbacks) {
+  const struct auth_callbacks_v1 *version = callbacks;
+  if (!own_process() || !version || version->version != 1 ||
+      !version->key_authorized || !version->key_removed)
+    die(123);
+  auth_callbacks = *version;
+  AUTH_INFO("auth new version=%u", version->version);
+  return &auth_context;
+}
+
+void adbd_auth_delete(void *context) {
+  if (own_process() && context != &auth_context)
+    die(123);
+}
+
+void adbd_auth_run(void *context) {
+  if (!own_process() || context != &auth_context)
+    die(123);
+  AUTH_INFO("auth run");
+  for (;;)
+    pause();
+}
+
+void adbd_auth_get_public_keys(
+    void *context,
+    bool (*callback)(void *opaque, const char *public_key, size_t length),
+    void *opaque) {
+  if (!own_process() || context != &auth_context || !callback)
+    die(123);
+  char *contents = NULL;
+  size_t length = 0;
+  AUTH_INFO("auth get public keys");
+  if (!load_authorized_keys(&contents, &length))
+    return;
+  size_t start = 0;
+  size_t delivered = 0;
+  while (start < length) {
+    size_t end = start;
+    while (end < length && contents[end] != '\n')
+      end++;
+    delivered++;
+    if (!callback(opaque, contents + start, end - start))
+      break;
+    start = end + 1;
+  }
+  secure_zero(contents, length);
+  free(contents);
+  AUTH_INFO("auth public keys delivered=%zu", delivered);
+}
+
+static uint64_t new_auth_id(void) {
+  uint64_t id = __atomic_fetch_add(&next_auth_id, 1, __ATOMIC_RELAXED);
+  if (!id)
+    die(123);
+  return id;
+}
+
+uint64_t adbd_auth_notify_auth(void *context, const char *key, size_t length) {
+  if (!own_process() || context != &auth_context || !key || !length)
+    die(123);
+  uint64_t id = new_auth_id();
+  AUTH_INFO("auth notify authorized length=%zu id=%llu", length,
+            (unsigned long long)id);
+  return id;
+}
+
+void adbd_auth_notify_disconnect(void *context, uint64_t id) {
+  if (!own_process() || context != &auth_context || !id)
+    die(123);
+  AUTH_INFO("auth disconnect id=%llu", (unsigned long long)id);
+}
+
+uint64_t adbd_auth_prompt_user_with_id(void *context, const char *key,
+                                      size_t length, void *opaque) {
+  if (!own_process() || context != &auth_context || !key || !length)
+    die(123);
+  uint64_t id = new_auth_id();
+  pthread_mutex_lock(&session_lock);
+  bool allowed = token_valid && shell_allowed(active_peer);
+  pthread_mutex_unlock(&session_lock);
+  if (allowed) {
+    AUTH_INFO("auth approved by Tailscale host policy length=%zu id=%llu",
+              length, (unsigned long long)id);
+    auth_callbacks.key_authorized(opaque, id);
+  } else {
+    AUTH_WARN("auth rejected pending host approval length=%zu id=%llu", length,
+              (unsigned long long)id);
+  }
+  return id;
+}
+
+void adbd_auth_prompt_user(void *context, const char *key, size_t length,
+                           void *opaque) {
+  (void)adbd_auth_prompt_user_with_id(context, key, length, opaque);
+}
+
+uint64_t adbd_auth_tls_device_connected(void *context, int32_t type,
+                                        const char *key, size_t length) {
+  (void)type;
+  if (!own_process() || context != &auth_context || !key || !length)
+    die(123);
+  uint64_t id = new_auth_id();
+  AUTH_INFO("auth TLS connected type=%d length=%zu id=%llu", type, length,
+            (unsigned long long)id);
+  return id;
+}
+
+void adbd_auth_tls_device_disconnected(void *context, int32_t type,
+                                       uint64_t id) {
+  (void)type;
+  adbd_auth_notify_disconnect(context, id);
+}
+
+uint32_t adbd_auth_get_max_version(void) { return 1; }
+
+bool adbd_auth_supports_feature(int32_t feature) {
+  (void)feature;
+  return false;
+}
+
+void adbd_auth_send_tls_server_port(void *context, uint16_t port) {
+  (void)port;
+  if (!own_process() || context != &auth_context)
+    die(123);
 }
 
 static int index_of(const char *name) {
@@ -114,8 +414,12 @@ static int fake_index(const prop_info *pi) {
 
 __attribute__((constructor)) static void configure(void) {
   const char *ip = getenv("TAILADB_IP"), *port = getenv("TAILADB_PORT"),
-             *fd = getenv("TAILADB_FD"), *control = getenv("TAILADB_CONTROL_FD");
-  if (!ip || !port || !fd || !control)
+             *fd = getenv("TAILADB_FD"), *control = getenv("TAILADB_CONTROL_FD"),
+             *su_directory = getenv("TAILADB_SU_DIR"),
+             *shell_hosts = getenv("TAILADB_ALLOWED_SHELL");
+  if (!ip || !port || !fd || !control || !su_directory ||
+      !shell_hosts || !parse_allowed_shell(shell_hosts) ||
+      strcmp(su_directory, "/data/local/tmp/net.ryuya_dev.tailadb"))
     die(120);
   control_fd = atoi(control);
   inherited_fd = atoi(fd);
@@ -130,6 +434,11 @@ __attribute__((constructor)) static void configure(void) {
   if (!end || *end || p < 1024 || p > 65535)
     die(120);
   endpoint.sin_port = htons((uint16_t)p);
+  if (snprintf(shell_path, sizeof(shell_path),
+               "PATH=%s:/product/bin:/apex/com.android.runtime/bin:"
+               "/apex/com.android.art/bin:/system_ext/bin:/system/bin",
+               su_directory) >= (int)sizeof(shell_path))
+    die(120);
   struct sockaddr_in actual = {0};
   socklen_t len = sizeof(actual);
   if (getsockname(inherited_fd, (struct sockaddr *)&actual, &len) ||
@@ -148,6 +457,8 @@ __attribute__((constructor)) static void configure(void) {
   unsetenv("TAILADB_IP");
   unsetenv("TAILADB_PORT");
   unsetenv("TAILADB_FD");
+  unsetenv("TAILADB_SU_DIR");
+  unsetenv("TAILADB_ALLOWED_SHELL");
 }
 
 const prop_info *__system_property_find(const char *name) {
@@ -282,16 +593,9 @@ static void verify_daemon(void) {
       capabilities[0].inheritable || capabilities[1].effective ||
       capabilities[1].permitted || capabilities[1].inheritable)
     die(126);
-  int (*getcon_fn)(char **) = dlsym(RTLD_NEXT, "getcon");
-  void (*freecon_fn)(char *) = dlsym(RTLD_NEXT, "freecon");
-  char *context = NULL;
-  if (!getcon_fn || !freecon_fn || getcon_fn(&context) || !context ||
-      strcmp(context, "u:r:adbd:s0")) {
-    if (context && freecon_fn)
-      freecon_fn(context);
+  char context[256] = {0};
+  if (!read_context(context, sizeof(context)) || strcmp(context, "u:r:adbd:s0"))
     die(126);
-  }
-  freecon_fn(context);
   require_cloexec(inherited_fd);
   require_cloexec(control_fd);
 }
@@ -319,6 +623,17 @@ static void ready(void) {
 static int accepted(int fd, const struct sockaddr *address, socklen_t length) {
   if (fd < 0)
     return fd;
+  unsigned minimum = __atomic_fetch_add(&next_transport_fd, 1, __ATOMIC_RELAXED);
+  if (minimum > 4096)
+    minimum = 128;
+  int stable_fd = fcntl(fd, F_DUPFD_CLOEXEC, (int)minimum);
+  int duplicate_error = errno;
+  close(fd);
+  if (stable_fd < 0) {
+    errno = duplicate_error;
+    return -1;
+  }
+  fd = stable_fd;
   struct sockaddr_in peer = {0};
   if (!address || length < sizeof(peer) || address->sa_family != AF_INET) {
     close(fd);
@@ -345,7 +660,11 @@ static int accepted(int fd, const struct sockaddr *address, socklen_t length) {
     return -1;
   }
   active_fd = fd;
+  active_peer = peer.sin_addr.s_addr;
   token_valid = true;
+  char peer_text[INET_ADDRSTRLEN] = {0};
+  inet_ntop(AF_INET, &peer.sin_addr, peer_text, sizeof(peer_text));
+  AUTH_INFO("socket accepted fd=%d peer=%s", fd, peer_text);
   struct control_message message = {.type = CONTROL_CONNECTED,
                                     .peer = peer.sin_addr.s_addr};
   memcpy(message.token, active_token, sizeof(active_token));
@@ -393,22 +712,37 @@ int accept(int fd, struct sockaddr *address, socklen_t *length) {
   return accepted(result, (struct sockaddr *)&peer, peer_length);
 }
 
-int close(int fd) {
-  int (*real)(int) = dlsym(RTLD_NEXT, "close");
-  if (!real)
-    die(120);
+static void session_closed(int fd) {
   if (own_process()) {
     pthread_mutex_lock(&session_lock);
     if (fd == active_fd) {
+      AUTH_INFO("socket close fd=%d", fd);
       struct control_message message = {.type = CONTROL_CLOSED};
       send_control(&message);
       active_fd = -1;
+      active_peer = 0;
       token_valid = false;
       secure_zero(active_token, sizeof(active_token));
     }
     pthread_mutex_unlock(&session_lock);
   }
+}
+
+int close(int fd) {
+  int (*real)(int) = dlsym(RTLD_NEXT, "close");
+  if (!real)
+    die(120);
+  session_closed(fd);
   return real(fd);
+}
+
+int android_fdsan_close_with_tag(int fd, uint64_t owner_tag) {
+  int (*real)(int, uint64_t) =
+      dlsym(RTLD_NEXT, "android_fdsan_close_with_tag");
+  if (!real)
+    die(120);
+  session_closed(fd);
+  return real(fd, owner_tag);
 }
 
 int execle(const char *path, const char *arg, ...) {
@@ -483,11 +817,12 @@ int execle(const char *path, const char *arg, ...) {
   snprintf(broker_environment, sizeof(broker_environment),
            "TAILADB_BROKER_FD=%d", broker[0]);
 
-  char *updated[258];
-  size_t count = 0;
-  for (; environment[count] && count < 255; count++)
-    updated[count] = environment[count];
-  if (environment[count]) {
+  char *updated[259];
+  size_t count = 0, input = 0;
+  for (; environment[input] && input < 255; input++)
+    if (strncmp(environment[input], "PATH=", 5))
+      updated[count++] = environment[input];
+  if (environment[input]) {
     secure_zero(session, sizeof(session));
     close(broker[0]);
     errno = E2BIG;
@@ -495,6 +830,7 @@ int execle(const char *path, const char *arg, ...) {
   }
   updated[count++] = session;
   updated[count++] = broker_environment;
+  updated[count++] = shell_path;
   updated[count] = NULL;
   int result = real_execve(path, arguments, updated);
   close(broker[0]);
