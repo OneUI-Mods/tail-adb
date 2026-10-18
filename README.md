@@ -81,3 +81,5 @@ rootが必要なホストだけ「root昇格を許可」をオンにし、ADB sh
 コードは[MIT License](LICENSE)です。依存ライブラリのライセンスはアプリ内の「ライセンス」と[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)で確認できます。Tailscale社の公式アプリではありません。
 
 ビルドと内部構造は[開発者向けガイド](docs/development.md)、検証対象ファームウェアは[実機基準](research/sm-s948q-android16-oneui8.md)を参照してください。
+
+自作ソースの書式と確認方法は[ソースの書式](docs/source-style.md)に記載しています。

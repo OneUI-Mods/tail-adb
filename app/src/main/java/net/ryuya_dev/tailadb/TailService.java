@@ -49,15 +49,14 @@ public final class TailService extends Service {
     runBackendCommand(context, stop, 30);
   }
 
-  static void runBackendCommand(
-      android.content.Context context, boolean stop, long timeoutSeconds) throws Exception {
+  static void runBackendCommand(android.content.Context context, boolean stop, long timeoutSeconds)
+      throws Exception {
     String folder = context.getApplicationInfo().nativeLibraryDir;
     File helper = new File(folder, "libtailadb_exec.so");
     if (!helper.canExecute()) throw new IOException("Missing native backend");
     String command;
     if (stop) {
-      command =
-          "exec " + quote(helper.getAbsolutePath()) + " --stop " + quote(ROOT_DIRECTORY);
+      command = "exec " + quote(helper.getAbsolutePath()) + " --stop " + quote(ROOT_DIRECTORY);
     } else {
       File shim = new File(folder, "libtailadb_policy.so");
       File su = new File(folder, "libtailadb_su.so");
@@ -128,8 +127,9 @@ public final class TailService extends Service {
         } else if (fields[1].equals("PEER_CLOSED")) {
           State.setPeer(context, "");
         } else {
-          if (fields[1].equals("STOPPED") || fields[1].startsWith("ERROR_") ||
-              fields[1].startsWith("WAITING_")) State.setPeer(context, "");
+          if (fields[1].equals("STOPPED")
+              || fields[1].startsWith("ERROR_")
+              || fields[1].startsWith("WAITING_")) State.setPeer(context, "");
           State.set(context, fields[1], fields.length > 2 ? fields[2] : "");
         }
       }

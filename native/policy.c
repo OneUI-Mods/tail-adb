@@ -39,6 +39,7 @@ enum control_type {
   CONTROL_CLOSED = 3,
   CONTROL_BROKER = 4
 };
+
 struct control_message {
   uint32_t type;
   uint32_t peer;
@@ -71,6 +72,7 @@ static pthread_mutex_t session_lock = PTHREAD_MUTEX_INITIALIZER;
 struct local_auth_context {
   uint32_t marker;
 };
+
 struct auth_callbacks_v1 {
   uint32_t version;
   void (*key_authorized)(void *opaque, uint64_t id);
@@ -80,8 +82,14 @@ static struct local_auth_context auth_context = {.marker = 0x54414442};
 static struct auth_callbacks_v1 auth_callbacks;
 static uint64_t next_auth_id = 1;
 
-static bool own_process(void) { return configured && getpid() == daemon_pid; }
-static void die(int code) { _exit(code); }
+static bool own_process(void) {
+  return configured && getpid() == daemon_pid;
+}
+
+static void die(int code) {
+  _exit(code);
+}
+
 static void secure_zero(void *memory, size_t length) {
   volatile uint8_t *bytes = memory;
   while (length--)
@@ -90,8 +98,7 @@ static void secure_zero(void *memory, size_t length) {
 
 static void require_cloexec(int fd) {
   int flags = fcntl(fd, F_GETFD);
-  if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) ||
-      (fcntl(fd, F_GETFD) & FD_CLOEXEC) == 0)
+  if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) || (fcntl(fd, F_GETFD) & FD_CLOEXEC) == 0)
     die(120);
 }
 
@@ -143,8 +150,8 @@ static void require_adbd_context(void) {
 }
 
 static bool valid_key_character(char c) {
-  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-         (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=';
+  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '+' ||
+         c == '/' || c == '=';
 }
 
 static bool parse_allowed_shell(const char *text) {
@@ -156,8 +163,7 @@ static bool parse_allowed_shell(const char *text) {
   while (*start) {
     const char *end = strchr(start, ',');
     size_t length = end ? (size_t)(end - start) : strlen(start);
-    if (!length || length >= INET_ADDRSTRLEN ||
-        allowed_shell_count >= MAX_ALLOWED)
+    if (!length || length >= INET_ADDRSTRLEN || allowed_shell_count >= MAX_ALLOWED)
       return false;
     char ip[INET_ADDRSTRLEN];
     memcpy(ip, start, length);
@@ -185,12 +191,10 @@ static bool shell_allowed(uint32_t peer) {
 }
 
 static bool validate_key_line(const char *line, size_t length) {
-  if (!length || length > 4096 || memchr(line, 0, length) ||
-      memchr(line, '\r', length))
+  if (!length || length > 4096 || memchr(line, 0, length) || memchr(line, '\r', length))
     return false;
   size_t key_length = 0;
-  while (key_length < length && line[key_length] != ' ' &&
-         line[key_length] != '\t')
+  while (key_length < length && line[key_length] != ' ' && line[key_length] != '\t')
     key_length++;
   if (key_length != 700)
     return false;
@@ -203,18 +207,16 @@ static bool validate_key_line(const char *line, size_t length) {
 static bool load_authorized_keys(char **contents, size_t *length) {
   *contents = NULL;
   *length = 0;
-  int directory = open("/data/misc/adb",
-                       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+  int directory = open("/data/misc/adb", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
   if (directory < 0) {
     AUTH_WARN("authorized keys: directory open failed errno=%d", errno);
     return false;
   }
   struct stat directory_stat;
-  bool trusted = !fstat(directory, &directory_stat) &&
-                 S_ISDIR(directory_stat.st_mode) && directory_stat.st_uid == 1000 &&
-                 directory_stat.st_gid == 2000 && !(directory_stat.st_mode & 0027);
-  int fd = trusted ? openat(directory, "adb_keys", O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
-                   : -1;
+  bool trusted = !fstat(directory, &directory_stat) && S_ISDIR(directory_stat.st_mode) &&
+                 directory_stat.st_uid == 1000 && directory_stat.st_gid == 2000 &&
+                 !(directory_stat.st_mode & 0027);
+  int fd = trusted ? openat(directory, "adb_keys", O_RDONLY | O_CLOEXEC | O_NOFOLLOW) : -1;
   close(directory);
   if (fd < 0) {
     AUTH_WARN("authorized keys: trust/open failed errno=%d", errno);
@@ -237,10 +239,9 @@ static bool load_authorized_keys(char **contents, size_t *length) {
   }
   char extra;
   ssize_t extra_size = data ? read(fd, &extra, 1) : -1;
-  trusted = data && used == (size_t)before.st_size && extra_size == 0 &&
-            !fstat(fd, &after) && before.st_dev == after.st_dev &&
-            before.st_ino == after.st_ino && before.st_size == after.st_size &&
-            before.st_mtime == after.st_mtime;
+  trusted = data && used == (size_t)before.st_size && extra_size == 0 && !fstat(fd, &after) &&
+            before.st_dev == after.st_dev && before.st_ino == after.st_ino &&
+            before.st_size == after.st_size && before.st_mtime == after.st_mtime;
   close(fd);
   if (!trusted) {
     AUTH_WARN("authorized keys: stable read or metadata validation failed");
@@ -254,8 +255,7 @@ static bool load_authorized_keys(char **contents, size_t *length) {
     while (end < used && data[end] != '\n')
       end++;
     if (!validate_key_line(data + start, end - start) || ++keys > 128) {
-      AUTH_WARN("authorized keys: invalid line index=%zu length=%zu", keys + 1,
-                end - start);
+      AUTH_WARN("authorized keys: invalid line index=%zu length=%zu", keys + 1, end - start);
       secure_zero(data, used);
       free(data);
       return false;
@@ -270,8 +270,8 @@ static bool load_authorized_keys(char **contents, size_t *length) {
 
 void *adbd_auth_new(void *callbacks) {
   const struct auth_callbacks_v1 *version = callbacks;
-  if (!own_process() || !version || version->version != 1 ||
-      !version->key_authorized || !version->key_removed)
+  if (!own_process() || !version || version->version != 1 || !version->key_authorized ||
+      !version->key_removed)
     die(123);
   auth_callbacks = *version;
   AUTH_INFO("auth new version=%u", version->version);
@@ -291,10 +291,10 @@ void adbd_auth_run(void *context) {
     pause();
 }
 
-void adbd_auth_get_public_keys(
-    void *context,
-    bool (*callback)(void *opaque, const char *public_key, size_t length),
-    void *opaque) {
+void adbd_auth_get_public_keys(void *context,
+                               bool (*callback)(void *opaque, const char *public_key,
+                                                size_t length),
+                               void *opaque) {
   if (!own_process() || context != &auth_context || !callback)
     die(123);
   char *contents = NULL;
@@ -329,8 +329,7 @@ uint64_t adbd_auth_notify_auth(void *context, const char *key, size_t length) {
   if (!own_process() || context != &auth_context || !key || !length)
     die(123);
   uint64_t id = new_auth_id();
-  AUTH_INFO("auth notify authorized length=%zu id=%llu", length,
-            (unsigned long long)id);
+  AUTH_INFO("auth notify authorized length=%zu id=%llu", length, (unsigned long long)id);
   return id;
 }
 
@@ -340,8 +339,8 @@ void adbd_auth_notify_disconnect(void *context, uint64_t id) {
   AUTH_INFO("auth disconnect id=%llu", (unsigned long long)id);
 }
 
-uint64_t adbd_auth_prompt_user_with_id(void *context, const char *key,
-                                      size_t length, void *opaque) {
+uint64_t adbd_auth_prompt_user_with_id(void *context, const char *key, size_t length,
+                                       void *opaque) {
   if (!own_process() || context != &auth_context || !key || !length)
     die(123);
   uint64_t id = new_auth_id();
@@ -349,8 +348,8 @@ uint64_t adbd_auth_prompt_user_with_id(void *context, const char *key,
   bool allowed = token_valid && shell_allowed(active_peer);
   pthread_mutex_unlock(&session_lock);
   if (allowed) {
-    AUTH_INFO("auth approved by Tailscale host policy length=%zu id=%llu",
-              length, (unsigned long long)id);
+    AUTH_INFO("auth approved by Tailscale host policy length=%zu id=%llu", length,
+              (unsigned long long)id);
     auth_callbacks.key_authorized(opaque, id);
   } else {
     AUTH_WARN("auth rejected pending host approval length=%zu id=%llu", length,
@@ -359,29 +358,28 @@ uint64_t adbd_auth_prompt_user_with_id(void *context, const char *key,
   return id;
 }
 
-void adbd_auth_prompt_user(void *context, const char *key, size_t length,
-                           void *opaque) {
+void adbd_auth_prompt_user(void *context, const char *key, size_t length, void *opaque) {
   (void)adbd_auth_prompt_user_with_id(context, key, length, opaque);
 }
 
-uint64_t adbd_auth_tls_device_connected(void *context, int32_t type,
-                                        const char *key, size_t length) {
+uint64_t adbd_auth_tls_device_connected(void *context, int32_t type, const char *key,
+                                        size_t length) {
   (void)type;
   if (!own_process() || context != &auth_context || !key || !length)
     die(123);
   uint64_t id = new_auth_id();
-  AUTH_INFO("auth TLS connected type=%d length=%zu id=%llu", type, length,
-            (unsigned long long)id);
+  AUTH_INFO("auth TLS connected type=%d length=%zu id=%llu", type, length, (unsigned long long)id);
   return id;
 }
 
-void adbd_auth_tls_device_disconnected(void *context, int32_t type,
-                                       uint64_t id) {
+void adbd_auth_tls_device_disconnected(void *context, int32_t type, uint64_t id) {
   (void)type;
   adbd_auth_notify_disconnect(context, id);
 }
 
-uint32_t adbd_auth_get_max_version(void) { return 1; }
+uint32_t adbd_auth_get_max_version(void) {
+  return 1;
+}
 
 bool adbd_auth_supports_feature(int32_t feature) {
   (void)feature;
@@ -413,12 +411,11 @@ static int fake_index(const prop_info *pi) {
 }
 
 __attribute__((constructor)) static void configure(void) {
-  const char *ip = getenv("TAILADB_IP"), *port = getenv("TAILADB_PORT"),
-             *fd = getenv("TAILADB_FD"), *control = getenv("TAILADB_CONTROL_FD"),
-             *su_directory = getenv("TAILADB_SU_DIR"),
+  const char *ip = getenv("TAILADB_IP"), *port = getenv("TAILADB_PORT"), *fd = getenv("TAILADB_FD"),
+             *control = getenv("TAILADB_CONTROL_FD"), *su_directory = getenv("TAILADB_SU_DIR"),
              *shell_hosts = getenv("TAILADB_ALLOWED_SHELL");
-  if (!ip || !port || !fd || !control || !su_directory ||
-      !shell_hosts || !parse_allowed_shell(shell_hosts) ||
+  if (!ip || !port || !fd || !control || !su_directory || !shell_hosts ||
+      !parse_allowed_shell(shell_hosts) ||
       strcmp(su_directory, "/data/local/tmp/net.ryuya_dev.tailadb"))
     die(120);
   control_fd = atoi(control);
@@ -441,9 +438,8 @@ __attribute__((constructor)) static void configure(void) {
     die(120);
   struct sockaddr_in actual = {0};
   socklen_t len = sizeof(actual);
-  if (getsockname(inherited_fd, (struct sockaddr *)&actual, &len) ||
-      len != sizeof(actual) || actual.sin_family != AF_INET ||
-      actual.sin_addr.s_addr != endpoint.sin_addr.s_addr ||
+  if (getsockname(inherited_fd, (struct sockaddr *)&actual, &len) || len != sizeof(actual) ||
+      actual.sin_family != AF_INET || actual.sin_addr.s_addr != endpoint.sin_addr.s_addr ||
       actual.sin_port != endpoint.sin_port)
     die(121);
   snprintf(props[0].value, sizeof(props[0].value), "acceptfd:%d", inherited_fd);
@@ -465,24 +461,21 @@ const prop_info *__system_property_find(const char *name) {
   int i = index_of(name);
   if (i >= 0)
     return (const prop_info *)&props[i];
-  const prop_info *(*real)(const char *) =
-      dlsym(RTLD_NEXT, "__system_property_find");
+  const prop_info *(*real)(const char *) = dlsym(RTLD_NEXT, "__system_property_find");
   if (!real)
     die(120);
   return real(name);
 }
 
 void __system_property_read_callback(const prop_info *pi,
-                                     void (*cb)(void *, const char *,
-                                                const char *, uint32_t),
+                                     void (*cb)(void *, const char *, const char *, uint32_t),
                                      void *cookie) {
   int i = fake_index(pi);
   if (i >= 0) {
     cb(cookie, props[i].name, props[i].value, 2);
     return;
   }
-  void (*real)(const prop_info *,
-               void (*)(void *, const char *, const char *, uint32_t), void *) =
+  void (*real)(const prop_info *, void (*)(void *, const char *, const char *, uint32_t), void *) =
       dlsym(RTLD_NEXT, "__system_property_read_callback");
   if (!real)
     die(120);
@@ -504,8 +497,7 @@ int __system_property_get(const char *name, char *value) {
 uint32_t __system_property_serial(const prop_info *pi) {
   if (fake_index(pi) >= 0)
     return 2;
-  uint32_t (*real)(const prop_info *) =
-      dlsym(RTLD_NEXT, "__system_property_serial");
+  uint32_t (*real)(const prop_info *) = dlsym(RTLD_NEXT, "__system_property_serial");
   if (!real)
     die(120);
   return real(pi);
@@ -520,8 +512,7 @@ bool __system_property_wait(const prop_info *pi, uint32_t old, uint32_t *next,
       *next = 2;
     return false;
   }
-  bool (*real)(const prop_info *, uint32_t, uint32_t *,
-               const struct timespec *) =
+  bool (*real)(const prop_info *, uint32_t, uint32_t *, const struct timespec *) =
       dlsym(RTLD_NEXT, "__system_property_wait");
   if (!real)
     die(120);
@@ -533,8 +524,7 @@ int __system_property_set(const char *name, const char *value) {
     errno = EPERM;
     return -1;
   }
-  int (*real)(const char *, const char *) =
-      dlsym(RTLD_NEXT, "__system_property_set");
+  int (*real)(const char *, const char *) = dlsym(RTLD_NEXT, "__system_property_set");
   if (!real)
     die(120);
   return real(name, value);
@@ -581,16 +571,13 @@ static void send_broker(const struct control_message *message, int broker) {
 }
 
 static void verify_daemon(void) {
-  if (getuid() != 2000 || geteuid() != 2000 || getgid() != 2000 ||
-      getegid() != 2000 || prctl(PR_SET_PDEATHSIG, SIGKILL) ||
-      getppid() != parent_pid)
+  if (getuid() != 2000 || geteuid() != 2000 || getgid() != 2000 || getegid() != 2000 ||
+      prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent_pid)
     die(126);
-  struct __user_cap_header_struct header = {
-      .version = _LINUX_CAPABILITY_VERSION_3, .pid = 0};
+  struct __user_cap_header_struct header = {.version = _LINUX_CAPABILITY_VERSION_3, .pid = 0};
   struct __user_cap_data_struct capabilities[2] = {0};
-  if (syscall(__NR_capget, &header, capabilities) ||
-      capabilities[0].effective || capabilities[0].permitted ||
-      capabilities[0].inheritable || capabilities[1].effective ||
+  if (syscall(__NR_capget, &header, capabilities) || capabilities[0].effective ||
+      capabilities[0].permitted || capabilities[0].inheritable || capabilities[1].effective ||
       capabilities[1].permitted || capabilities[1].inheritable)
     die(126);
   char context[256] = {0};
@@ -605,9 +592,8 @@ static bool is_listener(int fd) {
     return false;
   struct sockaddr_in actual = {0};
   socklen_t length = sizeof(actual);
-  return !getsockname(fd, (struct sockaddr *)&actual, &length) &&
-         length == sizeof(actual) && actual.sin_family == AF_INET &&
-         actual.sin_port == endpoint.sin_port &&
+  return !getsockname(fd, (struct sockaddr *)&actual, &length) && length == sizeof(actual) &&
+         actual.sin_family == AF_INET && actual.sin_port == endpoint.sin_port &&
          actual.sin_addr.s_addr == endpoint.sin_addr.s_addr;
 }
 
@@ -665,8 +651,7 @@ static int accepted(int fd, const struct sockaddr *address, socklen_t length) {
   char peer_text[INET_ADDRSTRLEN] = {0};
   inet_ntop(AF_INET, &peer.sin_addr, peer_text, sizeof(peer_text));
   AUTH_INFO("socket accepted fd=%d peer=%s", fd, peer_text);
-  struct control_message message = {.type = CONTROL_CONNECTED,
-                                    .peer = peer.sin_addr.s_addr};
+  struct control_message message = {.type = CONTROL_CONNECTED, .peer = peer.sin_addr.s_addr};
   memcpy(message.token, active_token, sizeof(active_token));
   send_control(&message);
   pthread_mutex_unlock(&session_lock);
@@ -674,8 +659,7 @@ static int accepted(int fd, const struct sockaddr *address, socklen_t length) {
 }
 
 int accept4(int fd, struct sockaddr *address, socklen_t *length, int flags) {
-  int (*real)(int, struct sockaddr *, socklen_t *, int) =
-      dlsym(RTLD_NEXT, "accept4");
+  int (*real)(int, struct sockaddr *, socklen_t *, int) = dlsym(RTLD_NEXT, "accept4");
   if (!real)
     die(120);
   if (!is_listener(fd))
@@ -737,8 +721,7 @@ int close(int fd) {
 }
 
 int android_fdsan_close_with_tag(int fd, uint64_t owner_tag) {
-  int (*real)(int, uint64_t) =
-      dlsym(RTLD_NEXT, "android_fdsan_close_with_tag");
+  int (*real)(int, uint64_t) = dlsym(RTLD_NEXT, "android_fdsan_close_with_tag");
   if (!real)
     die(120);
   session_closed(fd);
@@ -764,8 +747,7 @@ int execle(const char *path, const char *arg, ...) {
   char *const *environment = va_arg(values, char *const *);
   va_end(values);
 
-  int (*real_execve)(const char *, char *const[], char *const[]) =
-      dlsym(RTLD_NEXT, "execve");
+  int (*real_execve)(const char *, char *const[], char *const[]) = dlsym(RTLD_NEXT, "execve");
   if (!real_execve) {
     errno = ENOSYS;
     return -1;
@@ -789,8 +771,7 @@ int execle(const char *path, const char *arg, ...) {
     return -1;
   }
   int broker_flags = fcntl(broker[0], F_GETFD);
-  if (broker_flags < 0 ||
-      fcntl(broker[0], F_SETFD, broker_flags & ~FD_CLOEXEC) ||
+  if (broker_flags < 0 || fcntl(broker[0], F_SETFD, broker_flags & ~FD_CLOEXEC) ||
       (fcntl(broker[0], F_GETFD) & FD_CLOEXEC)) {
     close(broker[0]);
     close(broker[1]);
@@ -814,8 +795,7 @@ int execle(const char *path, const char *arg, ...) {
   session[sizeof(session) - 1] = 0;
   secure_zero(token, sizeof(token));
   char broker_environment[48];
-  snprintf(broker_environment, sizeof(broker_environment),
-           "TAILADB_BROKER_FD=%d", broker[0]);
+  snprintf(broker_environment, sizeof(broker_environment), "TAILADB_BROKER_FD=%d", broker[0]);
 
   char *updated[259];
   size_t count = 0, input = 0;

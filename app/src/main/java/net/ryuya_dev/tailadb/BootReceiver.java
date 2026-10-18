@@ -39,10 +39,7 @@ public final class BootReceiver extends BroadcastReceiver {
                 Thread.sleep(300);
                 TailService.refreshState(application);
               } catch (Throwable error) {
-                State.set(
-                    application,
-                    "ERROR_AUTO_ROOT",
-                    error.getClass().getSimpleName());
+                State.set(application, "ERROR_AUTO_ROOT", error.getClass().getSimpleName());
               } finally {
                 pending.finish();
               }

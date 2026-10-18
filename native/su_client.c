@@ -56,10 +56,9 @@ int main(int argc, char **argv) {
   long broker = broker_value ? strtol(broker_value, &broker_end, 10) : -1;
   int socket_type = 0;
   socklen_t socket_type_length = sizeof(socket_type);
-  if (!broker_value || !broker_end || *broker_end || broker < 3 ||
-      broker > INT32_MAX || fcntl((int)broker, F_GETFD) < 0 ||
-      getsockopt((int)broker, SOL_SOCKET, SO_TYPE, &socket_type,
-                 &socket_type_length) ||
+  if (!broker_value || !broker_end || *broker_end || broker < 3 || broker > INT32_MAX ||
+      fcntl((int)broker, F_GETFD) < 0 ||
+      getsockopt((int)broker, SOL_SOCKET, SO_TYPE, &socket_type, &socket_type_length) ||
       socket_type != SOCK_SEQPACKET)
     return fail("this shell is not attached to Tail ADB");
 
@@ -93,8 +92,7 @@ int main(int argc, char **argv) {
     return fail("privilege broker unavailable");
   }
   int descriptor_flags = fcntl(fd, F_GETFD);
-  if (descriptor_flags < 0 ||
-      fcntl(fd, F_SETFD, descriptor_flags | FD_CLOEXEC)) {
+  if (descriptor_flags < 0 || fcntl(fd, F_SETFD, descriptor_flags | FD_CLOEXEC)) {
     close(fd);
     free(request);
     return fail("could not protect broker descriptor");
@@ -102,10 +100,8 @@ int main(int argc, char **argv) {
 
   char control[CMSG_SPACE(sizeof(int) * 3)] = {0};
   struct iovec iov = {.iov_base = request, .iov_len = total};
-  struct msghdr message = {.msg_iov = &iov,
-                           .msg_iovlen = 1,
-                           .msg_control = control,
-                           .msg_controllen = sizeof(control)};
+  struct msghdr message = {
+      .msg_iov = &iov, .msg_iovlen = 1, .msg_control = control, .msg_controllen = sizeof(control)};
   struct cmsghdr *header = CMSG_FIRSTHDR(&message);
   header->cmsg_level = SOL_SOCKET;
   header->cmsg_type = SCM_RIGHTS;

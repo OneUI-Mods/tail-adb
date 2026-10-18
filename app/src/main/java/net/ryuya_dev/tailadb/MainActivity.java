@@ -298,9 +298,7 @@ public final class MainActivity extends AppCompatActivity {
     var preferences = getSharedPreferences("settings", MODE_PRIVATE);
     String saved = preferences.getString(preference, "");
     TreeSet<String> hosts = new TreeSet<>();
-    if (saved != null)
-      for (String item : saved.split(","))
-        if (!item.isBlank()) hosts.add(item);
+    if (saved != null) for (String item : saved.split(",")) if (!item.isBlank()) hosts.add(item);
     if (allowed) hosts.add(peer);
     else hosts.remove(peer);
     var edit = preferences.edit().putString(preference, String.join(",", hosts));
@@ -355,9 +353,7 @@ public final class MainActivity extends AppCompatActivity {
 
   private TreeSet<String> hostSet(String saved) {
     TreeSet<String> hosts = new TreeSet<>();
-    if (saved != null)
-      for (String item : saved.split(","))
-        if (!item.isBlank()) hosts.add(item);
+    if (saved != null) for (String item : saved.split(",")) if (!item.isBlank()) hosts.add(item);
     return hosts;
   }
 
@@ -374,10 +370,12 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private List<UserHandle> availableProfiles() {
-    List<UserHandle> profiles = new ArrayList<>(getSystemService(UserManager.class).getUserProfiles());
+    List<UserHandle> profiles =
+        new ArrayList<>(getSystemService(UserManager.class).getUserProfiles());
     profiles.sort(
         Comparator.comparingInt(
-            profile -> profile.hashCode() == currentUserId() ? Integer.MIN_VALUE : profile.hashCode()));
+            profile ->
+                profile.hashCode() == currentUserId() ? Integer.MIN_VALUE : profile.hashCode()));
     return profiles;
   }
 
@@ -404,9 +402,11 @@ public final class MainActivity extends AppCompatActivity {
     String[] fields = detail.split("\\t", -1);
     for (int i = 1; i < fields.length; i++) {
       String[] values = fields[i].split(",", -1);
-      if (values.length != 3 || !values[0].matches("[0-9]{1,5}") ||
-          !values[1].matches("100\\.(6[4-9]|[78][0-9]|9[0-9]|1[01][0-9]|12[0-7])\\.[0-9]{1,3}\\.[0-9]{1,3}") ||
-          !values[2].matches("[A-Za-z0-9_.-]{1,15}")) continue;
+      if (values.length != 3
+          || !values[0].matches("[0-9]{1,5}")
+          || !values[1].matches(
+              "100\\.(6[4-9]|[78][0-9]|9[0-9]|1[01][0-9]|12[0-7])\\.[0-9]{1,3}\\.[0-9]{1,3}")
+          || !values[2].matches("[A-Za-z0-9_.-]{1,15}")) continue;
       try {
         candidates.add(new VpnCandidate(Integer.parseInt(values[0]), values[1], values[2]));
       } catch (NumberFormatException ignored) {
@@ -430,10 +430,12 @@ public final class MainActivity extends AppCompatActivity {
     boolean visible = code.startsWith("WAITING_") && !candidates.isEmpty();
     vpnCandidatesCard.setVisibility(visible ? View.VISIBLE : View.GONE);
     if (!visible) return;
-    int selected = getSharedPreferences("settings", MODE_PRIVATE)
-        .getInt("tailscale_user", currentUserId());
-    vpnCandidatesTitle.setText(getResources().getQuantityString(
-        R.plurals.vpn_candidates_found, candidates.size(), candidates.size()));
+    int selected =
+        getSharedPreferences("settings", MODE_PRIVATE).getInt("tailscale_user", currentUserId());
+    vpnCandidatesTitle.setText(
+        getResources()
+            .getQuantityString(
+                R.plurals.vpn_candidates_found, candidates.size(), candidates.size()));
     vpnCandidatesMessage.setText(
         code.equals("WAITING_MULTIPLE_TAILSCALE")
             ? R.string.vpn_candidates_same_user
@@ -446,10 +448,12 @@ public final class MainActivity extends AppCompatActivity {
       row.setClickable(candidate.userId != selected);
       row.setFocusable(candidate.userId != selected);
       row.setStrokeWidth(dp(candidate.userId == selected ? 2 : 1));
-      row.setStrokeColor(MaterialColors.getColor(
-          row, candidate.userId == selected
-              ? androidx.appcompat.R.attr.colorPrimary
-              : com.google.android.material.R.attr.colorOutline));
+      row.setStrokeColor(
+          MaterialColors.getColor(
+              row,
+              candidate.userId == selected
+                  ? androidx.appcompat.R.attr.colorPrimary
+                  : com.google.android.material.R.attr.colorOutline));
       LinearLayout rowContent = new LinearLayout(this);
       rowContent.setOrientation(LinearLayout.HORIZONTAL);
       rowContent.setGravity(Gravity.CENTER_VERTICAL);
@@ -469,8 +473,10 @@ public final class MainActivity extends AppCompatActivity {
       labels.addView(network);
       rowContent.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
       Chip choice = new Chip(this);
-      choice.setText(candidate.userId == selected
-          ? R.string.vpn_candidate_selected : R.string.vpn_candidate_use);
+      choice.setText(
+          candidate.userId == selected
+              ? R.string.vpn_candidate_selected
+              : R.string.vpn_candidate_use);
       choice.setCheckable(false);
       choice.setClickable(false);
       rowContent.addView(choice);
@@ -495,9 +501,11 @@ public final class MainActivity extends AppCompatActivity {
                   return label;
                 })
             .toArray(String[]::new);
-    int selected = getSharedPreferences("settings", MODE_PRIVATE).getInt("tailscale_user", currentUserId());
+    int selected =
+        getSharedPreferences("settings", MODE_PRIVATE).getInt("tailscale_user", currentUserId());
     int checked = 0;
-    for (int i = 0; i < profiles.size(); i++) if (profiles.get(i).hashCode() == selected) checked = i;
+    for (int i = 0; i < profiles.size(); i++)
+      if (profiles.get(i).hashCode() == selected) checked = i;
     new MaterialAlertDialogBuilder(this)
         .setTitle(R.string.choose_tailscale_user)
         .setSingleChoiceItems(
@@ -566,7 +574,8 @@ public final class MainActivity extends AppCompatActivity {
     rootToggle.setEnabled(havePeer && !TailService.running);
     renderAuthorizedHosts(shellHosts, rootHosts);
     if (vpnUser != null) {
-      int selected = getSharedPreferences("settings", MODE_PRIVATE).getInt("tailscale_user", currentUserId());
+      int selected =
+          getSharedPreferences("settings", MODE_PRIVATE).getInt("tailscale_user", currentUserId());
       vpnUser.setText(userLabel(selected));
       vpnUser.setEnabled(!TailService.running && !busy);
     }
