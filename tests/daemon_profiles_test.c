@@ -13,6 +13,7 @@ int main(void) {
   assert(!tailadb_daemon_supported("", ""));
   assert(!tailadb_daemon_supported(NULL, auth));
   assert(!tailadb_android17.verified);
+  assert(!tailadb_daemon_supported(tailadb_android17.adbd_sha256, tailadb_android17.auth_sha256));
   puts("Daemon profile checks: PASS (known Android 16 pair retained; unknown pairs rejected)");
   return 0;
 }

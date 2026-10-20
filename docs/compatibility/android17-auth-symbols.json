@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "recorded_on": "2026-10-20",
+  "firmware": "S948QOPU1BZI9",
+  "architecture": "AArch64",
+  "adbd_sha256": "d4d3141261f2f6c68d3effcf2c2aaf7a8167a3d882011fe51cd8248b5fa8a501",
+  "auth_sha256": "46bff7ced0447286293b5597b43a660db0ae3a954dd9a5db9725bf6bb6cb6a6e",
+  "adbd_required_auth_symbols": [
+    "adbd_auth_get_max_version",
+    "adbd_auth_get_public_keys",
+    "adbd_auth_new",
+    "adbd_auth_notify_auth",
+    "adbd_auth_notify_disconnect",
+    "adbd_auth_prompt_user",
+    "adbd_auth_prompt_user_with_id",
+    "adbd_auth_register_service",
+    "adbd_auth_run",
+    "adbd_auth_send_tls_server_port",
+    "adbd_auth_tls_device_connected",
+    "adbd_auth_tls_device_disconnected",
+    "adbd_auth_unregister_service"
+  ],
+  "required_symbols_not_interposed_by_current_policy": [
+    "adbd_auth_register_service",
+    "adbd_auth_unregister_service"
+  ],
+  "runtime_verified": false,
+  "warning": "Symbol presence does not establish function ABI or runtime compatibility. Android 17 profile remains disabled."
+}
