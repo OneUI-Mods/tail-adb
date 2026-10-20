@@ -21,7 +21,7 @@ Tail ADBは、root化したAndroid端末にTailscale経由だけで接続でき�
 
 ## 対応環境
 
-現在の実機対応はGalaxy S26 Ultra `SM-S948Q`、Android 16、One UI 8.0、ビルド`BP4A.251205.006.S948QOPS1AZHL`です。OS内の`adbd`と認証ライブラリが検証済みバイナリと一致しない場合は、安全のため開始しません。
+実機で確認した環境はGalaxy S26 Ultra `SM-S948Q`のAndroid 16 / One UI 8.0（`BP4A.251205.006.S948QOPS1AZHL`）とAndroid 17 / One UI 9（`CP2A.260605.016.S948QOPU1BZI9`、検証済みMainline ADB搭載）です。OS内の`adbd`と認証ライブラリが検証済みバイナリと一致しない場合は、安全のため開始しません。
 
 必要なもの：
 
@@ -37,14 +37,14 @@ Xposed、LSPosed、Vectorのスコープ設定は不要です。Tail ADBはroot�
 [GitHub Releases](https://github.com/ryuya0124/tail-adb/releases)から最新のrelease APKをダウンロードしてインストールします。配布APKは専用のリリース鍵で署名しています。
 
 ```sh
-adb install -r TailAdb-0.2.1.apk
+adb install -r TailAdb-0.2.2.apk
 ```
 
 初回起動時にroot権限を自動で要求します。拒否されている場合は画面にエラーを表示するため、root管理アプリでTail ADBを許可してください。
 
 ## 使い方
 
-Android 17 / ADB Wi-Fi 2.0世代への互換処理は、現在検証用ビルドへ分離しています。Tailscale専用の接続方式とAndroid 16の対応を維持しています。17の実機確認は未完了であり、通常配布版の対応済み環境にはまだ含めていません。[対応状況](docs/compatibility/android17.md)
+Android 17でもTailscale専用の接続方式を使えます。Android 16の対応も維持しています。17のADB本体には複数の版があるため、動作確認した本体・認証ライブラリの組み合わせだけを許可します。[対応状況](docs/compatibility/android17.md)
 
 1. 端末とPCをTailscaleへ接続します。
 2. Tail ADBを開き、必要なら設定からTailscaleを動かしているAndroidユーザーを選びます。

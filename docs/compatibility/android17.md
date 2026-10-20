@@ -4,7 +4,7 @@
 
 Tailscale専用の接続をAndroid 17へ対応させます。通常のワイヤレスデバッグ用のQRペアリングやLAN内の自動検出は追加しません。Android 16の認証、許可済みホスト、shell/rootの分離、既存設定を維持します。
 
-17向けの認証互換処理と状態表示の修正は実装済みです。実機での認証・隔離確認はまだのため、通常ビルドでは17のプロファイルを許可しません。明示的に作る17検証用releaseビルドだけが、下記の完全一致ペアを許可します。端末へのインストールとbackendの交換は、外出中の通信を保つため利用者の指示で保留中です。
+17向けの認証互換処理と状態表示の修正を実装しました。2026-10-20にSM-S948Qの実機で、稼働中のMainline ADB本体と17の認証ライブラリの組み合わせを検証しています。この完全一致ペアを通常版で許可します。ROM内のfactory ADB本体は別の候補として残し、実機未検証のため検証用ビルドだけで許可します。
 
 公式の[ADB Wi-Fi 2.0説明](https://developer.android.com/tools/adb#connect-to-a-device-over-wi-fi)はAndroid 17とADB 37.0.0以降を対象にしています。TailADBでは、その世代のadbdを既存のTailscale専用listenerへ接続する互換処理を扱います。
 
@@ -17,7 +17,14 @@ SM-S948Q / BZI9、SDK 37、One UI 90000、ビルド表示`CP2A.260605.016.S948QO
 | `adbd` | `d4d3141261f2f6c68d3effcf2c2aaf7a8167a3d882011fe51cd8248b5fa8a501` |
 | `libadbd_auth.so` | `46bff7ced0447286293b5597b43a660db0ae3a954dd9a5db9725bf6bb6cb6a6e` |
 
-16と17は別のハッシュペア・policy ABI名を持ちます。未知、空、16/17混在のペアは両ビルドで拒否します。16の元ソースと許可ペアは[android16.md](android16.md)を参照してください。検証版でも16のペアは従来どおり許可されます。
+実機ではfactory APEXではなく、更新されたMainline APEX（versionCode `372038020`）が有効でした。稼働中のADB本体は次のハッシュで、16で監査した本体と同一です。モジュール自体をAndroid 16版と判断しているわけではありません。
+
+| 実機で有効なファイル | SHA-256 | 選択するpolicy ABI |
+| --- | --- | --- |
+| `adbd` | `459d1f67760789bdf8eb5a7a5c1bbe409d5dd3837d408ce4d7d14e496fcb8cbb` | `android16` |
+| `libadbd_auth.so` | `46bff7ced0447286293b5597b43a660db0ae3a954dd9a5db9725bf6bb6cb6a6e` | 同上の明示ペア |
+
+`android17_legacy_adbd.h`へこのペアを独立して記録しました。ADB本体だけ、OSの表示だけで互換性を推定せず、認証ライブラリも一致したときに16用の処理を選びます。未知・空・登録していない混在ペアは拒否します。factory 17のプロファイルと認証API対応は削除していません。16の元ソースと許可ペアは[android16.md](android16.md)を参照してください。
 
 ## 認証APIと接続管理
 
@@ -75,11 +82,25 @@ Linuxの統合試験は、Androidでも実運用backendのあるホストでも�
 bash tools/test-linux-integration.sh
 ```
 
-## 実機で残る確認
+## Android 17実機の確認（2026-10-20）
 
-- 実際のadbd/authペア、KernelSUのno-new-privileges、UID/GID 2000、SELinux adbd/shell、network/mount namespace。
-- shell/root許可の個別失効、未許可ホストの拒否、切断と再接続、IP・VPN変更、別プロファイルのTailscale。
-- ADB Wi-Fi 2.0のlifecycleフラグの実際の値と、標準ワイヤレスデバッグとの共存。LAN待受・mDNS広告を追加しないこと。
-- 通常起動・ソフトリブート後の復帰。利用者の指示なしに再起動しないこと。
+署名済みrelease検証版で確認後、通常版0.2.2（code 4）を上書きしました。通常版でも既存設定を維持し、shell・root接続が復帰することを確認しました。専用backendだけを停止・再開しました。端末、SystemUI、One UIホームは再起動していません。
 
-Android 16実機での再試験と17実機での試験は未実施です。署名済みの検証用release APKはローカルに用意しましたが、端末更新・backend交換・システム再起動は行っていません。通常版で17を許可するのは、実機試験を終えてからです。
+- 実際のADB本体と認証ライブラリのSHA-256が上記ペアと一致。
+- Tailscale専用IPv4・VPNインターフェースだけで待受。LANアドレスの同ポートへは接続できない。
+- ADB shellはUID/GID 2000、SELinux `u:r:shell:s0`、SELinux全体はEnforcing。
+- root許可時は同梱`su`がUID 0、`u:r:ksu:s0`。root未許可で開始したbackendでは同梱`su`が拒否し、絶対パスの`/system/bin/su`でもUID 2000のまま。
+- shell未許可ではADB接続がunauthorizedとなり、アプリへ承認待ちの接続元を通知。
+- 停止後のstatusはSTOPPEDで、古いpeerを再表示しない。許可済み設定で再開するとshell・root接続が復帰。
+- ADB syncでpushしたバイト列を取得し、一致を確認。
+- 標準ADBのUSB・TLS接続と共存し、システムADBのTCPポート設定は変更なし。
+
+一時的なテスト用権限はbackendの引数にだけ渡し、保存されたshell/rootホスト設定を変更せず復帰しました。生の接続元アドレス、シリアル、設定バックアップ、セッション情報はGitへ含めません。
+
+## 残る確認
+
+- ROM内のfactory 17本体（`d4d314…`）での認証・隔離・lifecycle・mDNS動作。現実機はこの本体で動作していないため未検証で、通常版の許可対象にはしません。
+- Android 16実機での再試験。従来の完全一致ペアと処理は維持しています。
+- VPN変更、別プロファイル、別ホスト同時競合、長時間Doze、通常起動・ソフトリブート後の復帰。
+
+システム再起動を伴う確認は、再起動不要な試験を終えてから最後に行います。

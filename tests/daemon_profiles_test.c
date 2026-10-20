@@ -17,7 +17,12 @@ int main(void) {
          (bool)TAILADB_ANDROID17_VALIDATION);
   assert(tailadb_daemon_profile(adbd, auth) == &tailadb_android16);
   assert(!strcmp(tailadb_daemon_profile(adbd, auth)->policy_abi, "android16"));
-  assert(!tailadb_daemon_supported(adbd, tailadb_android17.auth_sha256));
+  assert(tailadb_daemon_supported(adbd, tailadb_android17.auth_sha256));
+  assert(tailadb_android17_legacy_adbd.verified);
+  const struct tailadb_daemon_profile *retained =
+      tailadb_daemon_profile(adbd, tailadb_android17.auth_sha256);
+  assert(retained == &tailadb_android17_legacy_adbd);
+  assert(!strcmp(retained->policy_abi, "android16"));
   assert(!tailadb_daemon_supported(tailadb_android17.adbd_sha256, auth));
   if (TAILADB_ANDROID17_VALIDATION) {
     const struct tailadb_daemon_profile *candidate =
@@ -25,6 +30,6 @@ int main(void) {
     assert(candidate == &tailadb_android17);
     assert(!strcmp(candidate->policy_abi, "android17"));
   }
-  puts("Daemon profiles: PASS (Android 16 preserved; Android 17 requires validation build)");
+  puts("Daemon profiles: PASS (Android 16 and audited Mainline pair preserved; factory 17 gated)");
   return 0;
 }
