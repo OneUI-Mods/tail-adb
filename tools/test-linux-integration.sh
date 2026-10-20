@@ -8,7 +8,7 @@ fi
 test_root="$(cd "$(dirname "$0")/.." && pwd)"
 test_output="$(mktemp -d)"
 trap 'rm -rf "$test_output"' EXIT
-for test_name in backend_status auth_policy; do
+for test_name in backend_status auth_policy recovery_io; do
   "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-function \
     -I"$test_root/tests/host_include" \
     "$test_root/tests/${test_name}_integration.c" -o "$test_output/$test_name" -ldl -pthread

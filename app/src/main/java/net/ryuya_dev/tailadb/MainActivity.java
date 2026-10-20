@@ -27,13 +27,15 @@ import java.util.concurrent.*;
 public final class MainActivity extends AppCompatActivity {
   private LinearLayout root, connection, settings;
   private MaterialTextView status, endpoint, rootState, peerState;
+  private MaterialTextView networkUser;
+  private MaterialButton verifyNetwork;
   private Chip badge;
   private ImageView shield;
   private MaterialCardView vpnCandidatesCard;
   private MaterialTextView vpnCandidatesTitle, vpnCandidatesMessage;
   private LinearLayout vpnCandidatesList, authorizedHostsList;
   private CircularProgressIndicator progress;
-  private MaterialButton start, stop, copy;
+  private MaterialButton start, stop, copy, companionCopy;
   private MaterialSwitch shellToggle, rootToggle;
   private MaterialButton vpnUser;
   private TextInputLayout portLayout;
@@ -121,6 +123,13 @@ public final class MainActivity extends AppCompatActivity {
     progress.setIndeterminate(true);
     panel.addView(progress, new LinearLayout.LayoutParams(dp(32), dp(32)));
     panel.addView(text(getString(R.string.instructions), 16));
+    networkUser = text("", 16);
+    panel.addView(networkUser);
+    verifyNetwork =
+        button(
+            R.string.verify_network,
+            () -> startService(new Intent(this, TailService.class).setAction("VERIFY_NETWORK")));
+    panel.addView(verifyNetwork, new LinearLayout.LayoutParams(-1, dp(56)));
     vpnCandidatesCard = new MaterialCardView(this);
     LinearLayout.LayoutParams candidatesParams = new LinearLayout.LayoutParams(-1, -2);
     candidatesParams.bottomMargin = dp(16);
@@ -155,6 +164,21 @@ public final class MainActivity extends AppCompatActivity {
               }
             });
     address.addView(copy);
+    address.addView(text(getString(R.string.companion_note), 14));
+    companionCopy =
+        button(
+            R.string.companion_copy,
+            () -> {
+              String endpoint = State.prefs(this).getString("detail", "").split("\t", -1)[0];
+              if (endpoint.matches("100\\.[0-9.]+:[0-9]{4,5}")) {
+                getSystemService(ClipboardManager.class)
+                    .setPrimaryClip(
+                        ClipData.newPlainText(
+                            "Tail ADB", "python3 tailadb_watch.py --device " + endpoint));
+                Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show();
+              }
+            });
+    address.addView(companionCopy);
     LinearLayout access = card(connection);
     access.addView(text(getString(R.string.connected_host), 16));
     peerState = text("—", 18);
@@ -543,9 +567,47 @@ public final class MainActivity extends AppCompatActivity {
                 : androidx.appcompat.R.attr.colorPrimary);
     shield.setColorFilter(color);
     progress.setVisibility(busy ? View.VISIBLE : View.GONE);
+    int selectedUser =
+        getSharedPreferences("settings", MODE_PRIVATE).getInt("tailscale_user", currentUserId());
+    long checkAge = SystemClock.elapsedRealtime() - State.prefs(this).getLong("network_time", 0);
+    boolean checked =
+        State.prefs(this).getInt("network_user", -1) == selectedUser
+            && checkAge >= 0
+            && checkAge < 45000;
+    String result = checked ? State.prefs(this).getString("network_state", "") : "";
+    String[] vpnFields = detail.split("\t", -1);
+    boolean selectedMatches =
+        !active || (vpnFields.length >= 3 && Integer.toString(selectedUser).equals(vpnFields[2]));
+    if (!checked
+        && active
+        && vpnFields.length >= 3
+        && Integer.toString(selectedUser).equals(vpnFields[2])) result = "READY";
+    if (!selectedMatches) result = "MISMATCH";
+    else if (code.equals("WAITING_SELECTED_USER")) result = "OTHER_USER";
+    else if (code.equals("WAITING_TAILSCALE")) result = "UNAVAILABLE";
+    else if (code.equals("WAITING_NETWORK_INSPECTION")) result = "INSPECTION_ERROR";
+    int checkLabel =
+        switch (result) {
+          case "READY" -> R.string.network_verified;
+          case "OTHER_USER" -> R.string.network_other_user;
+          case "MISMATCH" -> R.string.network_mismatch;
+          case "MULTIPLE" -> R.string.state_multiple_tailscale;
+          case "UNAVAILABLE" -> R.string.network_not_connected;
+          case "INSPECTION_ERROR" -> R.string.state_network_inspection;
+          default -> R.string.network_unverified;
+        };
+    networkUser.setText(
+        getString(R.string.network_user_status, userLabel(selectedUser), getString(checkLabel)));
+    verifyNetwork.setEnabled(!TailService.running);
     String host = detail.split("\t", -1)[0];
     endpoint.setText(active ? "adb connect " + host : "—");
-    copy.setEnabled(active);
+    copy.setEnabled(active && selectedMatches);
+    String[] endpointFields = detail.split("\t", -1);
+    companionCopy.setEnabled(
+        active
+            && selectedMatches
+            && endpointFields.length >= 5
+            && endpointFields[4].matches("[1-9][0-9]{3,4}"));
     start.setEnabled(!TailService.running && !busy && !backend);
     stop.setEnabled(!TailService.running && backend);
     port.setEnabled(!TailService.running && !backend);

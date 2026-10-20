@@ -86,6 +86,7 @@ int main(void) {
   assert(owner >= 0);
   if (!owner) {
     close(ready[0]);
+    signal(SIGTERM, SIG_IGN); // Simulate the legacy backend stuck in Binder inspection.
     char path[PATH_MAX], pid[32];
     snprintf(path, sizeof(path), "%s/lock", test_directory);
     int lock = open(path, O_CREAT | O_RDWR, 0600);
@@ -124,10 +125,13 @@ int main(void) {
   record("pid", pid);
   read_status(output, sizeof(output));
   assert(!strcmp(output, "TAILADB\tSTOPPED\t\n"));
+  assert(stop_backend(test_directory) == 1); // Do not signal an unrelated/reused PID.
   snprintf(pid, sizeof(pid), "%ld\n", (long)owner);
   record("pid", pid);
-  assert(!kill(owner, SIGTERM));
-  assert(waitpid(owner, NULL, 0) == owner);
+  assert(!stop_backend(test_directory));
+  int owner_status = 0;
+  assert(waitpid(owner, &owner_status, 0) == owner);
+  assert(WIFSIGNALED(owner_status) && WTERMSIG(owner_status) == SIGKILL);
   read_status(output, sizeof(output));
   assert(!strcmp(output, "TAILADB\tSTOPPED\t\n"));
 

@@ -29,6 +29,7 @@
 #include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -36,6 +37,8 @@
 #include <unistd.h>
 
 #include "daemon_profiles.h"
+#include "bounded_command.h"
+#include "network_recovery.h"
 #include "status_record.h"
 
 #define TOKEN_BYTES 32
@@ -138,13 +141,22 @@ static bool safe_iface(const char *name) {
   return true;
 }
 
-static bool package_uid(unsigned uid) {
-  char command[160], line[512];
-  snprintf(command, sizeof(command),
-           "/system/bin/cmd package list packages -U --user %u com.tailscale.ipn", uid / 100000);
-  FILE *f = popen(command, "r");
-  if (!f)
+static bool package_uid(unsigned uid, int64_t deadline) {
+  char user[16], line[512];
+  snprintf(user, sizeof(user), "%u", uid / 100000);
+  char *args[] = {"/system/bin/cmd",   "package", "list", "packages", "-U", "--user", user,
+                  "com.tailscale.ipn", NULL};
+  int64_t remaining = deadline - tailadb_now_ms();
+  if (remaining <= 0)
     return false;
+  char *text = tailadb_capture(args, 65536, remaining < 3000 ? (int)remaining : 3000, &stopped);
+  if (!text)
+    return false;
+  FILE *f = fmemopen(text, strlen(text), "r");
+  if (!f) {
+    free(text);
+    return false;
+  }
   bool good = false;
   while (fgets(line, sizeof(line), f)) {
     unsigned read_uid = 0;
@@ -153,7 +165,9 @@ static bool package_uid(unsigned uid) {
         !strcmp(pkg, "com.tailscale.ipn") && read_uid == uid)
       good = true;
   }
-  return pclose(f) == 0 && good;
+  fclose(f);
+  free(text);
+  return good;
 }
 
 static bool same_vpn(const struct vpn *left, const struct vpn *right) {
@@ -176,14 +190,27 @@ static void vpn_detail(const struct vpn_scan *scan, unsigned user_id, char *deta
 }
 
 static enum vpn_result vpn_info(struct vpn *out, unsigned user_id, struct vpn_scan *scan) {
-  FILE *f = popen("/system/bin/dumpsys connectivity", "r");
-  if (!f)
+  int64_t deadline = tailadb_now_ms() + 5000;
+  char *args[] = {"/system/bin/dumpsys", "-t", "3", "connectivity", NULL};
+  char *text = tailadb_capture(args, 2 * 1024 * 1024, 4000, &stopped);
+  if (!text)
     return VPN_INSPECTION_ERROR;
+  FILE *f = fmemopen(text, strlen(text), "r");
+  if (!f) {
+    free(text);
+    return VPN_INSPECTION_ERROR;
+  }
   char *line = NULL;
   size_t cap = 0;
   int matches = 0;
   struct vpn candidate = {0};
   while (getline(&line, &cap, f) > 0) {
+    if (tailadb_now_ms() >= deadline) {
+      free(line);
+      fclose(f);
+      free(text);
+      return VPN_INSPECTION_ERROR;
+    }
     if (!strstr(line, "NetworkAgentInfo{") ||
         !strstr(line, "VPN CONNECTED extra: VPN:com.tailscale.ipn}"))
       continue;
@@ -196,7 +223,7 @@ static enum vpn_result vpn_info(struct vpn *out, unsigned user_id, struct vpn_sc
     if (sscanf(iface, "InterfaceName: %15s", v.iface) != 1 ||
         sscanf(handle, "handle{%llu}", &h) != 1 || sscanf(owner, "OwnerUid: %u", &v.uid) != 1)
       continue;
-    if (!package_uid(v.uid))
+    if (!package_uid(v.uid, deadline))
       continue;
     // Only a Tailscale CGNAT /32 address in the LinkAddresses list is accepted.
     const char *p = ips + strlen("LinkAddresses: [ ");
@@ -229,7 +256,8 @@ static enum vpn_result vpn_info(struct vpn *out, unsigned user_id, struct vpn_sc
       continue;
     if (scan->count >= MAX_VPN_CANDIDATES) {
       free(line);
-      pclose(f);
+      fclose(f);
+      free(text);
       return VPN_INSPECTION_ERROR;
     }
     scan->candidates[scan->count++] = v;
@@ -241,8 +269,9 @@ static enum vpn_result vpn_info(struct vpn *out, unsigned user_id, struct vpn_sc
     matches++;
   }
   free(line);
-  int rc = pclose(f);
-  if (rc)
+  fclose(f);
+  free(text);
+  if (tailadb_now_ms() >= deadline)
     return VPN_INSPECTION_ERROR;
   if (!matches)
     return scan->count ? VPN_OTHER_USER : VPN_UNAVAILABLE;
@@ -478,7 +507,8 @@ static void reap(pid_t child) {
     return;
   kill(child, SIGTERM);
   for (int i = 0; i < 20; i++) {
-    if (waitpid(child, NULL, WNOHANG) == child)
+    pid_t waited = waitpid(child, NULL, WNOHANG);
+    if (waited == child || (waited < 0 && errno == ECHILD))
       return;
     usleep(50000);
   }
@@ -921,20 +951,95 @@ static int stop_backend(const char *directory) {
     close(fd);
   char lock_path[PATH_MAX];
   snprintf(lock_path, sizeof(lock_path), "%s/lock", directory);
-  if (got <= 0 || !strstr(process_status, "\nUid:\t0\t0\t0\t0\n") ||
-      !process_has_file((pid_t)pid, lock_path) || kill((pid_t)pid, SIGTERM)) {
+  int pidfd = (int)syscall(__NR_pidfd_open, (pid_t)pid, 0);
+  if (pidfd < 0 || got <= 0 || !strstr(process_status, "\nUid:\t0\t0\t0\t0\n") ||
+      !process_has_file((pid_t)pid, lock_path) ||
+      syscall(__NR_pidfd_send_signal, pidfd, SIGTERM, NULL, 0)) {
+    if (pidfd >= 0)
+      close(pidfd);
     event(errno == ESRCH ? "STOPPED" : "ERROR_CONTROL", "");
     return errno == ESRCH ? 0 : 1;
   }
   for (int i = 0; i < 30; i++) {
-    if (kill((pid_t)pid, 0) && errno == ESRCH) {
+    struct pollfd exited = {.fd = pidfd, .events = POLLIN};
+    if (poll(&exited, 1, 100) > 0) {
+      close(pidfd);
       event("STOPPED", "");
       return 0;
     }
-    usleep(100000);
   }
+  // A legacy supervisor may be stuck in unbounded Binder inspection. Signal only the pinned
+  // process that owned our private lock; a recycled PID can never become the SIGKILL target.
+  if (!syscall(__NR_pidfd_send_signal, pidfd, SIGKILL, NULL, 0)) {
+    struct pollfd exited = {.fd = pidfd, .events = POLLIN};
+    if (poll(&exited, 1, 1000) > 0) {
+      close(pidfd);
+      event("STOPPED", "");
+      return 0;
+    }
+  }
+  close(pidfd);
   event("ERROR_CONTROL", "");
   return 1;
+}
+
+struct backend {
+  pid_t child;
+  int listener, control;
+  struct vpn vpn;
+  uint32_t peer;
+  uint8_t token[TOKEN_BYTES];
+  bool active;
+};
+
+static void drop_backend(struct backend *backend) {
+  reap(backend->child);
+  backend->child = 0;
+  if (backend->listener >= 0)
+    close(backend->listener);
+  if (backend->control >= 0)
+    close(backend->control);
+  backend->listener = backend->control = -1;
+  backend->active = false;
+  backend->peer = 0;
+  secure_zero(backend->token, sizeof(backend->token));
+  memset(&backend->vpn, 0, sizeof(backend->vpn));
+  event("PEER_CLOSED", "");
+}
+
+static bool recover_child(struct backend *backend, struct tailadb_recovery *recovery) {
+  drop_backend(backend);
+  if (!tailadb_child_failed(recovery, tailadb_now_ms())) {
+    event("ERROR_CRASH_LOOP", "");
+    return false;
+  }
+  event("RETRYING", "");
+  return true;
+}
+
+// Read-only companion channel, bound to the same verified VPN as ADB. No remote command or
+// authorization mutation is accepted. Only existing shell-authorized Tailscale hosts receive data.
+static void health_reply(int listener, const struct backend *backend,
+                         const struct authorization *allowed) {
+  for (int i = 0; i < 4; i++) {
+    struct sockaddr_in peer = {0};
+    socklen_t length = sizeof(peer);
+    int client = accept4(listener, (struct sockaddr *)&peer, &length, SOCK_CLOEXEC | SOCK_NONBLOCK);
+    if (client < 0)
+      return;
+    if (length == sizeof(peer) && peer.sin_family == AF_INET &&
+        host_allowed(allowed, peer.sin_addr.s_addr)) {
+      const char *state = !backend->child                         ? "WAITING"
+                          : !backend->active                      ? "READY"
+                          : backend->peer == peer.sin_addr.s_addr ? "CHECK_ADB_SERVER"
+                                                                  : "OTHER_HOST";
+      char record[128];
+      int size = snprintf(record, sizeof(record), "TAILADB_HEALTH\t1\t%s\t%ld\n", state,
+                          (long)backend->child);
+      send(client, record, (size_t)size, MSG_DONTWAIT | MSG_NOSIGNAL);
+    }
+    close(client);
+  }
 }
 
 int main(int argc, char **argv) {
@@ -948,6 +1053,27 @@ int main(int argc, char **argv) {
     return status_backend(argv[2]);
   if (argc == 3 && !strcmp(argv[1], "--stop"))
     return stop_backend(argv[2]);
+  if (argc == 3 && !strcmp(argv[1], "--network-check")) {
+    char *end = NULL;
+    long user = strtol(argv[2], &end, 10);
+    if (!*argv[2] || *end || user < 0 || user > 21474) {
+      event("ERROR_ARGUMENT", "");
+      return 2;
+    }
+    struct vpn current = {0};
+    struct vpn_scan scan = {0};
+    enum vpn_result result = vpn_info(&current, (unsigned)user, &scan);
+    const char *state = result == VPN_READY              ? "READY"
+                        : result == VPN_OTHER_USER       ? "OTHER_USER"
+                        : result == VPN_AMBIGUOUS        ? "MULTIPLE"
+                        : result == VPN_INSPECTION_ERROR ? "INSPECTION_ERROR"
+                                                         : "UNAVAILABLE";
+    char detail[160];
+    snprintf(detail, sizeof(detail), "%s\t%ld\t%u\t%s\t%s", state, user, current.uid, current.iface,
+             current.ip);
+    event("NETWORK_CHECK", detail);
+    return 0;
+  }
   bool daemonize = argc == 9 && !strcmp(argv[1], "--start");
   int argument = daemonize ? 2 : 1;
   if ((!daemonize && argc != 8) || (daemonize && argc != 9)) {
@@ -1036,7 +1162,11 @@ int main(int argc, char **argv) {
   snprintf(binary, sizeof(binary), "%s/adbd", directory);
   char su_wrapper[400];
   snprintf(su_wrapper, sizeof(su_wrapper), "%s/su", directory);
-  if (copy_daemon(binary) || copy_helper(su_source, su_wrapper)) {
+  char policy_copy[400];
+  snprintf(policy_copy, sizeof(policy_copy), "%s/policy.so", directory);
+  // Package replacement removes the old nativeLibraryDir. Keep the active backend's policy
+  // alongside its private daemon so the next network recovery does not load a deleted APK path.
+  if (copy_daemon(binary) || copy_helper(su_source, su_wrapper) || copy_helper(shim, policy_copy)) {
     event("ERROR_DAEMON", "");
     return 4;
   }
@@ -1057,37 +1187,48 @@ int main(int argc, char **argv) {
     event("ERROR_KEYS", "");
     return 6;
   }
-  pid_t child = 0;
-  int listener = -1, control = -1;
-  struct vpn current = {0};
-  uint32_t current_peer = 0;
-  uint8_t current_token[TOKEN_BYTES] = {0};
-  bool session_active = false;
-  bool needs_check = true;
-  unsigned attempts = 0;
-  int failures = 0;
+  struct backend backend = {.listener = -1, .control = -1};
+  int health = -1;
+  int health_port = port == 65535 ? 65534 : (int)port + 1;
+  struct vpn health_vpn = {0};
+  struct tailadb_recovery recovery = {0};
   char last_state[32] = "";
   char last_detail[768] = "";
   while (!stopped) {
-    if (needs_check) {
+    tailadb_child_stable(&recovery, tailadb_now_ms());
+    if (backend.child && waitpid(backend.child, NULL, WNOHANG) == backend.child) {
+      backend.child = 0;
+      if (!recover_child(&backend, &recovery))
+        break;
+    }
+    if (!tailadb_poll_timeout(&recovery, tailadb_now_ms())) {
       struct vpn next = {0};
       struct vpn_scan scan = {0};
       enum vpn_result vpn_state = vpn_info(&next, (unsigned)user_id, &scan);
       bool available = vpn_state == VPN_READY;
-      if (child && (!available || strcmp(next.ip, current.ip) || next.index != current.index ||
-                    next.handle != current.handle || next.uid != current.uid)) {
-        reap(child);
-        child = 0;
-        if (listener >= 0)
-          close(listener);
-        listener = -1;
-        if (control >= 0)
-          close(control);
-        control = -1;
-        session_active = false;
-        current_peer = 0;
-        secure_zero(current_token, sizeof(current_token));
-        memset(&current, 0, sizeof(current));
+      if (stopped)
+        break;
+      tailadb_network_checked(&recovery, tailadb_now_ms(), available);
+      if (health >= 0 && (!available || !same_vpn(&health_vpn, &next))) {
+        close(health);
+        health = -1;
+      }
+      if (available && health < 0) {
+        health = secure_listener(&next, health_port);
+        if (health >= 0) {
+          int flags = fcntl(health, F_GETFL);
+          if (flags < 0 || fcntl(health, F_SETFL, flags | O_NONBLOCK)) {
+            close(health);
+            health = -1;
+          } else
+            health_vpn = next;
+        }
+      }
+      if (backend.child &&
+          (!available || strcmp(next.ip, backend.vpn.ip) || next.index != backend.vpn.index ||
+           next.handle != backend.vpn.handle || next.uid != backend.vpn.uid)) {
+        drop_backend(&backend);
+        recovery.child_started = 0;
       }
       if (!available) {
         char detail[768] = {0};
@@ -1101,21 +1242,28 @@ int main(int argc, char **argv) {
           strcpy(last_state, state);
           strcpy(last_detail, detail);
         }
-      } else if (!child && failures < 3) {
-        listener = secure_listener(&next, port);
-        if (listener < 0) {
+      } else if (!backend.child) {
+        backend.listener = secure_listener(&next, port);
+        if (backend.listener < 0) {
+          if (tailadb_transient_bind_error(errno)) {
+            event("WAITING_NETWORK_RECOVERY", "");
+            strcpy(last_state, "WAITING_NETWORK_RECOVERY");
+            last_detail[0] = 0;
+            tailadb_bind_retry(&recovery, tailadb_now_ms());
+            continue;
+          }
           event("ERROR_BIND", "");
           break;
         }
         int control_pair[2];
         if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, control_pair)) {
-          close(listener);
-          listener = -1;
+          close(backend.listener);
+          backend.listener = -1;
           event("ERROR_PIPE", "");
           break;
         }
-        child = fork();
-        if (child == 0) {
+        backend.child = fork();
+        if (backend.child == 0) {
           close(control_pair[0]);
           pid_t parent = getppid();
           if (prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent)
@@ -1134,7 +1282,7 @@ int main(int argc, char **argv) {
             send(control_pair[1], &failure, sizeof(failure), MSG_NOSIGNAL);
             _exit(124);
           }
-          close_unrelated(listener, control_pair[1]);
+          close_unrelated(backend.listener, control_pair[1]);
           int devnull = open("/dev/null", O_RDONLY);
           if (devnull < 0)
             _exit(124);
@@ -1142,16 +1290,16 @@ int main(int argc, char **argv) {
             _exit(124);
           if (devnull > 2)
             close(devnull);
-          int listener_flags = fcntl(listener, F_GETFD);
+          int listener_flags = fcntl(backend.listener, F_GETFD);
           int control_flags = fcntl(control_pair[1], F_GETFD);
           if (listener_flags < 0 || control_flags < 0 ||
-              fcntl(listener, F_SETFD, listener_flags & ~FD_CLOEXEC) ||
+              fcntl(backend.listener, F_SETFD, listener_flags & ~FD_CLOEXEC) ||
               fcntl(control_pair[1], F_SETFD, control_flags & ~FD_CLOEXEC) ||
-              (fcntl(listener, F_GETFD) & FD_CLOEXEC) ||
+              (fcntl(backend.listener, F_GETFD) & FD_CLOEXEC) ||
               (fcntl(control_pair[1], F_GETFD) & FD_CLOEXEC))
             _exit(124);
           char fd[20], controlfd[20], number[8];
-          snprintf(fd, sizeof(fd), "%d", listener);
+          snprintf(fd, sizeof(fd), "%d", backend.listener);
           snprintf(controlfd, sizeof(controlfd), "%d", control_pair[1]);
           snprintf(number, sizeof(number), "%ld", port);
           setenv("TAILADB_FD", fd, 1);
@@ -1161,7 +1309,7 @@ int main(int argc, char **argv) {
           setenv("TAILADB_SU_DIR", directory, 1);
           setenv("TAILADB_ALLOWED_SHELL", argv[argument + 5], 1);
           setenv("TAILADB_AUTH_ABI", daemon_profile->policy_abi, 1);
-          setenv("LD_PRELOAD", shim, 1);
+          setenv("LD_PRELOAD", policy_copy, 1);
           setenv("LD_LIBRARY_PATH", "/apex/com.android.adbd/lib64:/system/lib64", 1);
           unsetenv("ANDROID_SOCKET_adbd");
           setenv("ANDROID_LOG_TAGS", "*:i", 1);
@@ -1169,41 +1317,43 @@ int main(int argc, char **argv) {
           _exit(125);
         }
         close(control_pair[1]);
-        if (child < 0) {
+        if (backend.child < 0) {
           close(control_pair[0]);
-          close(listener);
-          listener = -1;
+          close(backend.listener);
+          backend.listener = -1;
           event("ERROR_FORK", "");
           break;
         }
-        control = control_pair[0];
-        struct pollfd ready = {.fd = control, .events = POLLIN};
+        backend.control = control_pair[0];
+        struct pollfd ready = {.fd = backend.control, .events = POLLIN};
         struct control_message message = {0};
         int ready_result = poll(&ready, 1, 1000);
-        ssize_t ready_size = ready_result > 0 ? recv(control, &message, sizeof(message), 0) : -1;
-        bool verified_ready = !ready_result && child_ready(child, getpid(), listener, binary);
+        ssize_t ready_size =
+            ready_result > 0 ? recv(backend.control, &message, sizeof(message), 0) : -1;
+        bool verified_ready =
+            !ready_result && child_ready(backend.child, getpid(), backend.listener, binary);
         if (!verified_ready &&
             (ready_result <= 0 || ready_size != sizeof(message) || message.type != CONTROL_READY)) {
           int child_status = 0;
-          pid_t waited = waitpid(child, &child_status, WNOHANG);
+          pid_t waited = waitpid(backend.child, &child_status, WNOHANG);
           if (!waited) {
-            kill(child, SIGTERM);
+            kill(backend.child, SIGTERM);
             for (int i = 0; i < 20 && !waited; i++) {
               usleep(50000);
-              waited = waitpid(child, &child_status, WNOHANG);
+              waited = waitpid(backend.child, &child_status, WNOHANG);
             }
           }
           if (!waited) {
-            kill(child, SIGKILL);
+            kill(backend.child, SIGKILL);
             do {
-              waited = waitpid(child, &child_status, 0);
+              waited = waitpid(backend.child, &child_status, 0);
             } while (waited < 0 && errno == EINTR);
           }
-          child = 0;
-          close(listener);
-          listener = -1;
-          close(control);
-          control = -1;
+          backend.child = 0;
+          close(backend.listener);
+          backend.listener = -1;
+          close(backend.control);
+          backend.control = -1;
           char detail[64] = "control_ready_failed";
           if (ready_size == sizeof(message) && message.type == CONTROL_FAILURE)
             snprintf(detail, sizeof(detail), "stage_%u_errno_%u", message.peer >> 16,
@@ -1215,52 +1365,44 @@ int main(int argc, char **argv) {
           event("ERROR_ISOLATION", detail);
           break;
         }
-        current = next;
+        backend.vpn = next;
+        recovery.child_started = tailadb_now_ms();
+        recovery.bind_attempts = 0;
+        recovery.retry_at = 0;
+      }
+      if (available && backend.child) {
         char info[160];
-        snprintf(info, sizeof(info), "%s:%ld\t%s\t%u\t%llu", next.ip, port, next.iface,
-                 next.uid / 100000, (unsigned long long)next.handle);
-        event("LISTENING", info);
-        strcpy(last_state, "LISTENING");
-        strcpy(last_detail, info);
+        snprintf(info, sizeof(info), "%s:%ld\t%s\t%u\t%llu\t%d", next.ip, port, next.iface,
+                 next.uid / 100000, (unsigned long long)next.handle, health >= 0 ? health_port : 0);
+        if (strcmp(last_state, "LISTENING") || strcmp(last_detail, info)) {
+          event("LISTENING", info);
+          strcpy(last_state, "LISTENING");
+          strcpy(last_detail, info);
+        }
       }
-      needs_check = false;
     }
-    if (child && waitpid(child, NULL, WNOHANG) == child) {
-      child = 0;
-      if (listener >= 0)
-        close(listener);
-      listener = -1;
-      if (control >= 0)
-        close(control);
-      control = -1;
-      session_active = false;
-      current_peer = 0;
-      secure_zero(current_token, sizeof(current_token));
-      failures++;
-      if (failures >= 3) {
-        event("ERROR_CRASH_LOOP", "");
-        break;
-      }
-      event("RETRYING", "");
-      needs_check = true;
-    }
-    struct pollfd fds[3] = {{.fd = route, .events = POLLIN},
+    struct pollfd fds[4] = {{.fd = route, .events = POLLIN},
                             {.fd = keys, .events = POLLIN},
-                            {.fd = control, .events = POLLIN | POLLHUP}};
-    // Netlink drives updates. A slow check covers VPN ownership changes without
-    // link changes.
-    int timeout = attempts < 4 ? 1000 : 15000;
-    int result = poll(fds, 3, timeout);
+                            {.fd = backend.control, .events = POLLIN | POLLHUP},
+                            {.fd = health, .events = POLLIN}};
+    // Absolute deadlines prevent peer/control traffic from starving VPN inspection.
+    int timeout = tailadb_poll_timeout(&recovery, tailadb_now_ms());
+    int result = poll(fds, 4, timeout);
     if (result < 0 && errno != EINTR) {
       event("ERROR_POLL", "");
       break;
     }
-    if (fds[0].revents & POLLIN) {
+    if (result < 0)
+      continue;
+    if (fds[0].revents & (POLLHUP | POLLNVAL)) {
+      event("ERROR_NETLINK", "");
+      break;
+    }
+    if (fds[0].revents & (POLLIN | POLLERR)) {
       char buffer[16384];
-      while (recv(route, buffer, sizeof(buffer), MSG_DONTWAIT) > 0) {
+      for (int i = 0; i < 64 && recv(route, buffer, sizeof(buffer), MSG_DONTWAIT) > 0; i++) {
       }
-      needs_check = true;
-      attempts = 0;
+      tailadb_network_event(&recovery, tailadb_now_ms());
     }
     if (fds[1].revents & POLLIN) {
       char changes[8192] __attribute__((aligned(__alignof__(struct inotify_event))));
@@ -1280,19 +1422,12 @@ int main(int argc, char **argv) {
         break;
       }
       if (changed) {
-        reap(child);
-        child = 0;
-        if (listener >= 0)
-          close(listener);
-        listener = -1;
-        if (control >= 0)
-          close(control);
-        control = -1;
-        session_active = false;
-        current_peer = 0;
-        secure_zero(current_token, sizeof(current_token));
-        needs_check = true;
+        drop_backend(&backend);
+        recovery.inspect_at = recovery.retry_at = 0;
+        recovery.child_started = 0;
         event("RETRYING", "");
+        // poll's control descriptor belongs to the old child and may now be reused.
+        continue;
       }
     }
     if (fds[2].revents & POLLIN) {
@@ -1305,7 +1440,7 @@ int main(int argc, char **argv) {
                                 .msg_iovlen = 1,
                                 .msg_control = ancillary,
                                 .msg_controllen = sizeof(ancillary)};
-        size = recvmsg(control, &packet, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
+        size = recvmsg(backend.control, &packet, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
         if (size != sizeof(message))
           break;
         int broker_client = -1;
@@ -1327,15 +1462,15 @@ int main(int argc, char **argv) {
             event("ERROR_CONTROL", "");
             continue;
           }
-          current_peer = message.peer;
-          memcpy(current_token, message.token, sizeof(current_token));
-          session_active = true;
+          backend.peer = message.peer;
+          memcpy(backend.token, message.token, sizeof(backend.token));
+          backend.active = true;
           char peer[INET_ADDRSTRLEN] = {0};
-          inet_ntop(AF_INET, &current_peer, peer, sizeof(peer));
+          inet_ntop(AF_INET, &backend.peer, peer, sizeof(peer));
           char detail[64];
           snprintf(detail, sizeof(detail), "%s\t%s", peer,
-                   host_allowed(&root_authorization, current_peer)    ? "ROOT"
-                   : host_allowed(&shell_authorization, current_peer) ? "SHELL"
+                   host_allowed(&root_authorization, backend.peer)    ? "ROOT"
+                   : host_allowed(&shell_authorization, backend.peer) ? "SHELL"
                                                                       : "PENDING");
           event("PEER", detail);
         } else if (message.type == CONTROL_CLOSED) {
@@ -1344,14 +1479,14 @@ int main(int argc, char **argv) {
             event("ERROR_CONTROL", "");
             continue;
           }
-          session_active = false;
-          current_peer = 0;
-          secure_zero(current_token, sizeof(current_token));
+          backend.active = false;
+          backend.peer = 0;
+          secure_zero(backend.token, sizeof(backend.token));
           event("PEER_CLOSED", "");
-        } else if (message.type == CONTROL_BROKER && valid_broker && session_active &&
-                   constant_equal(message.token, current_token, TOKEN_BYTES)) {
-          start_broker_session(broker_client, host_allowed(&root_authorization, current_peer),
-                               current_token);
+        } else if (message.type == CONTROL_BROKER && valid_broker && backend.active &&
+                   constant_equal(message.token, backend.token, TOKEN_BYTES)) {
+          start_broker_session(broker_client, host_allowed(&root_authorization, backend.peer),
+                               backend.token);
           broker_client = -1;
         } else {
           event("ERROR_CONTROL", "");
@@ -1360,34 +1495,41 @@ int main(int argc, char **argv) {
         if (broker_client >= 0)
           close(broker_client);
       } while (size == sizeof(message) && !stopped);
-      if (size == 0 || (size < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
-        event("ERROR_CONTROL", "");
-        stopped = 1;
+      if (size == 0 || (size < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+        if (!stopped && !recover_child(&backend, &recovery))
+          break;
+        continue;
       } else if (size > 0 && size != sizeof(message)) {
         event("ERROR_CONTROL", "");
         stopped = 1;
       }
     }
-    if (fds[2].revents & (POLLHUP | POLLERR | POLLNVAL)) {
+    if (!stopped && (fds[2].revents & (POLLHUP | POLLERR))) {
+      if (!recover_child(&backend, &recovery))
+        break;
+      continue;
+    }
+    if (fds[2].revents & POLLNVAL) {
       event("ERROR_CONTROL", "");
       stopped = 1;
     }
-    if (!result) {
-      needs_check = true;
-      attempts++;
+    if (!stopped && (fds[3].revents & POLLIN))
+      health_reply(health, &backend, &shell_authorization);
+    if (fds[3].revents & (POLLHUP | POLLERR | POLLNVAL)) {
+      close(health);
+      health = -1;
     }
   }
-  reap(child);
-  if (listener >= 0)
-    close(listener);
-  if (control >= 0)
-    close(control);
+  drop_backend(&backend);
+  if (health >= 0)
+    close(health);
   close(route);
   close(keys);
   close(lock);
   unlink(pidpath);
   unlink(binary);
   unlink(su_wrapper);
+  unlink(policy_copy);
   if (!terminal_error)
     event("STOPPED", "");
   return 0;

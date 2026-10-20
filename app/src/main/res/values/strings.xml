@@ -1,4 +1,14 @@
 <resources>
+  <string name="network_mismatch">The ADB connection is still using a different user. Wait for the listener to restart.</string>
+  <string name="verify_network">Check selected user’s Tailscale connection</string>
+  <string name="network_user_status">Selected user: %1$s\n%2$s</string>
+  <string name="network_verified">Tailscale connection verified for this user</string>
+  <string name="network_other_user">Tailscale is connected under a different user</string>
+  <string name="network_not_connected">Tailscale is not connected under this user</string>
+  <string name="network_unverified">Connection has not been verified</string>
+  <string name="companion_note">The optional PC companion reconnects when TCP works but ADB does not respond. It manages a separate ADB server and leaves other ADB work alone.</string>
+  <string name="companion_copy">Copy PC recovery command</string>
+  <string name="state_network_recovery">Waiting for network recovery · retries automatically</string>
   <string name="app_name">Tail ADB</string>
   <string name="connection">Connection</string>
   <string name="settings">Settings</string>

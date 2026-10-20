@@ -28,6 +28,7 @@
 #include <unistd.h>
 
 #include "auth_compat.h"
+#include "transport_health.h"
 
 #define TOKEN_BYTES 32
 #define MAX_ALLOWED 32
@@ -656,6 +657,12 @@ static int accepted(int fd, const struct sockaddr *address, socklen_t length) {
   if ((ntohl(peer.sin_addr.s_addr) & 0xffc00000U) != 0x64400000U) {
     close(fd);
     errno = EACCES;
+    return -1;
+  }
+  if (!tailadb_transport_health(fd)) {
+    int saved = errno;
+    close(fd);
+    errno = saved;
     return -1;
   }
   pthread_mutex_lock(&session_lock);

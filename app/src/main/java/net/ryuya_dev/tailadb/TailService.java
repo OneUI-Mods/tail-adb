@@ -17,11 +17,21 @@ public final class TailService extends Service {
     running = true;
     String action = intent == null ? "" : intent.getAction();
     boolean stop = "STOP".equals(action), restart = "RESTART".equals(action);
-    State.set(this, stop || restart ? "STOPPING" : "STARTING", "");
+    boolean verify = "VERIFY_NETWORK".equals(action);
+    if (!verify) State.set(this, stop || restart ? "STOPPING" : "STARTING", "");
     work.execute(
         () -> {
           try {
-            if (restart) {
+            if (verify) {
+              String helper = getApplicationInfo().nativeLibraryDir + "/libtailadb_exec.so";
+              int selectedUser =
+                  getSharedPreferences("settings", MODE_PRIVATE)
+                      .getInt("tailscale_user", android.os.Process.myUid() / 100000);
+              String command = "exec " + quote(helper) + " --network-check " + selectedUser;
+              java.lang.Process process =
+                  new ProcessBuilder("su", "-c", command).redirectErrorStream(true).start();
+              await(this, process, 8);
+            } else if (restart) {
               runBackendCommand(this, true);
               Thread.sleep(300);
               State.set(this, "STARTING", "");
@@ -35,6 +45,7 @@ public final class TailService extends Service {
             State.set(this, "ERROR_PROCESS", error.getClass().getSimpleName());
           } finally {
             running = false;
+            sendBroadcast(new Intent(State.ACTION).setPackage(getPackageName()));
             stopSelf(startId);
           }
         });
@@ -91,12 +102,7 @@ public final class TailService extends Service {
                 : new ProcessBuilder("su", "--ksu-no-new-privs", "-c", command))
             .redirectErrorStream(true)
             .start();
-    boolean nativeError = parse(context, process);
-    if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
-      process.destroyForcibly();
-      throw new IOException("Root command timeout");
-    }
-    if (process.exitValue() != 0 && !nativeError) throw new IOException("Root command failed");
+    await(context, process, timeoutSeconds);
   }
 
   static void refreshState(android.content.Context context) {
@@ -105,10 +111,33 @@ public final class TailService extends Service {
       String command = "exec " + quote(helper) + " --status " + quote(ROOT_DIRECTORY);
       java.lang.Process process =
           new ProcessBuilder("su", "-c", command).redirectErrorStream(true).start();
-      parse(context, process);
-      if (!process.waitFor(10, TimeUnit.SECONDS)) process.destroyForcibly();
+      await(context, process, 10);
     } catch (Throwable error) {
       if (!running) State.set(context, "ERROR_ROOT", error.getClass().getSimpleName());
+    }
+  }
+
+  private static void await(
+      android.content.Context context, java.lang.Process process, long timeoutSeconds)
+      throws Exception {
+    ExecutorService reader =
+        Executors.newSingleThreadExecutor(
+            task -> {
+              Thread thread = new Thread(task, "TailAdbOutput");
+              thread.setDaemon(true);
+              return thread;
+            });
+    Future<Boolean> parsed = reader.submit(() -> parse(context, process));
+    try {
+      // Reading stdout first used to bypass waitFor's timeout when a root/Binder command hung.
+      if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS))
+        throw new IOException("Root command timeout");
+      boolean nativeError = parsed.get(2, TimeUnit.SECONDS);
+      if (process.exitValue() != 0 && !nativeError) throw new IOException("Root command failed");
+    } finally {
+      process.destroyForcibly();
+      parsed.cancel(true);
+      reader.shutdownNow();
     }
   }
 
@@ -123,7 +152,9 @@ public final class TailService extends Service {
         String[] fields = line.split("\t", 3);
         if (fields.length < 2 || !fields[1].matches("[A-Z_]{2,40}")) continue;
         nativeError |= fields[1].startsWith("ERROR_");
-        if (fields[1].equals("PEER")) {
+        if (fields[1].equals("NETWORK_CHECK")) {
+          State.setNetworkCheck(context, fields.length > 2 ? fields[2] : "");
+        } else if (fields[1].equals("PEER")) {
           String[] peer = fields.length > 2 ? fields[2].split("\t", 2) : new String[0];
           State.setPeer(context, peer.length > 0 ? peer[0] : "");
         } else if (fields[1].equals("PEER_CLOSED")) {

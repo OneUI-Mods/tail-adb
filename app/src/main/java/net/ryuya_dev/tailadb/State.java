@@ -30,6 +30,21 @@ final class State {
     c.sendBroadcast(new Intent(ACTION).setPackage(c.getPackageName()));
   }
 
+  static void setNetworkCheck(Context context, String detail) {
+    String[] values = detail.split("\t", -1);
+    if (values.length < 2
+        || !values[1].matches("[0-9]{1,5}")
+        || !java.util.Set.of("READY", "OTHER_USER", "MULTIPLE", "INSPECTION_ERROR", "UNAVAILABLE")
+            .contains(values[0])) return;
+    prefs(context)
+        .edit()
+        .putString("network_state", values[0])
+        .putInt("network_user", Integer.parseInt(values[1]))
+        .putLong("network_time", android.os.SystemClock.elapsedRealtime())
+        .apply();
+    context.sendBroadcast(new Intent(ACTION).setPackage(context.getPackageName()));
+  }
+
   static int label(String state) {
     return switch (state) {
       case "LISTENING" -> R.string.state_listening;
@@ -40,6 +55,7 @@ final class State {
       case "WAITING_SELECTED_USER" -> R.string.state_selected_user;
       case "WAITING_MULTIPLE_TAILSCALE" -> R.string.state_multiple_tailscale;
       case "WAITING_NETWORK_INSPECTION" -> R.string.state_network_inspection;
+      case "WAITING_NETWORK_RECOVERY" -> R.string.state_network_recovery;
       case "RETRYING" -> R.string.state_retrying;
       case "ERROR_ROOT" -> R.string.state_root;
       case "ERROR_COMPAT" -> R.string.state_compat;

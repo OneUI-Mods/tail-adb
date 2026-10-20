@@ -1,4 +1,14 @@
 <resources>
+  <string name="network_mismatch">ADBの接続先が選択中のユーザーと異なります。待受の再開始を待ってください。</string>
+  <string name="verify_network">選択したユーザーのTailscale接続を確認</string>
+  <string name="network_user_status">選択中：%1$s\n%2$s</string>
+  <string name="network_verified">このユーザーでTailscale接続を確認済み</string>
+  <string name="network_other_user">別のユーザーでTailscaleに接続されています</string>
+  <string name="network_not_connected">このユーザーではTailscaleが未接続です</string>
+  <string name="network_unverified">接続は未確認です</string>
+  <string name="companion_note">PC側の補助コマンドで、TCPは通るのにADBが応答しない接続を自動復旧できます。他の作業とは別のADBサーバーを使います。</string>
+  <string name="companion_copy">PC側の復旧コマンドをコピー</string>
+  <string name="state_network_recovery">ネットワークの復旧待ち・自動で再試行します</string>
   <string name="app_name">Tail ADB</string>
   <string name="connection">接続</string>
   <string name="settings">設定</string>
