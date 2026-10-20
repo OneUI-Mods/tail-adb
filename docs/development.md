@@ -35,7 +35,7 @@ supervisorは `SO_BINDTODEVICE` とアドレス指定、`android_setsocknetwork(
 
 同時に受け付けるADBトランスポートを1つに限定し、accept時に接続元Tailscale IPv4と256-bitのセッショントークンをroot supervisorへ通知します。Samsung実装では低位のaccept済みFDがtransport登録時に閉じられたため、shimはsocketを`F_DUPFD_CLOEXEC`で128以上へ移してからadbdへ返します。plain `close()`とbionicの`android_fdsan_close_with_tag()`の両方を捕捉し、切断時に接続元とトークンを消去します。
 
-shell起動時だけトークンとbroker FDを環境へ渡し、PATHの先頭にはroot所有ディレクトリへコピーした制限付き`su`クライアントを追加します。追加adbdはPID 1を基準にした新しいmount namespaceで動きます。supervisorの起動時に適用したKernelSUのno-new-privileges属性は子孫へ継承されるため、UID 2000の標準shell互換性を保ったまま、`/system/bin/su`などKernelSU側の入口から再昇格できません。brokerは接続元IPがroot許可リストにあること、トークン、UID/GID 2000、SELinux peer context `u:r:shell:s0`、渡された標準入出力FDをすべて確認してから、既にUID 0のbroker子プロセスでrootコマンドを実行します。検査エラー、短い制御メッセージ、余分なancillary data、タイムアウトは拒否側に倒します。
+shell起動時だけトークンとbroker FDを環境へ渡し、PATHの先頭にはroot所有ディレクトリへコピーした制限付き`su`クライアントを追加します。追加adbdはPID 1を基準にした新しいmount namespaceで動きます。supervisorの起動時に適用したKernelSUのno-new-privileges属性は子孫へ継承されるため、UID 2000の標準shell互換性を保ったまま、`/system/bin/su`などKernelSU側の入口から再昇格できません。brokerは接続元IPがroot許可リストにあること、トークン、UID/GID 2000、SELinux peer context `u:r:shell:s0`、渡された標準入出力FDをすべて確認してから、既にUID 0のbroker子プロセスでrootコマンドを実行します。rootコマンドの子プロセスはPID 1のmountを基準に専用namespaceへ移り、起動元アプリのデータ隔離を引き継ぎません。切り替えに失敗した場合はコマンドを実行しません。検査エラー、短い制御メッセージ、余分なancillary data、タイムアウトは拒否側に倒します。
 
 ADBのRSA challenge/responseは維持しますが、Samsung実機の`u:r:adbd:s0`からclassic `/data/misc/adb/adb_keys`を読む経路は拒否されました。そこで未知キーの認証callbackでは、現在accept中のTailscale IPがアプリのshell許可リストにある場合だけ、そのセッションを承認します。未許可IPは`unauthorized`のままです。公開鍵をシステム鍵ストアやアプリ設定へ保存せず、秘密鍵、公開鍵本文、セッショントークンをログへ出しません。root許可はshell許可の部分集合として別に検査します。
 

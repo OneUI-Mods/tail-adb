@@ -97,6 +97,12 @@ bash tools/test-linux-integration.sh
 
 一時的なテスト用権限はbackendの引数にだけ渡し、保存されたshell/rootホスト設定を変更せず復帰しました。生の接続元アドレス、シリアル、設定バックアップ、セッション情報はGitへ含めません。
 
+## rootコマンドのmount namespace（2026-10-20）
+
+Android 17実機で、アプリから起動したbrokerがアプリのデータ隔離mountを継承し、許可済みrootコマンドでも他アプリのデータが見えない問題を確認しました。認可を済ませたrootコマンドの子プロセスだけがPID 1のmount namespaceを基準に専用namespaceを作るよう変更しました。broker、UID 2000のshell、ほかのプロセスのmountは変更しません。切り替えが失敗した場合はコマンドを実行せず終了します。
+
+修正版の署名済み通常releaseを実機へ更新し、rootで他アプリのデータディレクトリを参照できること、専用mount namespaceであることを確認しました。端末の再起動は不要です。
+
 ## 残る確認
 
 - ROM内のfactory 17本体（`d4d314…`）での認証・隔離・lifecycle・mDNS動作。現実機はこの本体で動作していないため未検証で、通常版の許可対象にはしません。

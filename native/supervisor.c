@@ -622,6 +622,13 @@ static void run_privileged(int client, int streams[3], struct request *request) 
     for (int i = 0; i < 3; i++)
       if (dup2(streams[i], i) < 0)
         _exit(126);
+    // App data isolation can remain in the app-launched broker's mount namespace.
+    // Only an already-authorized root command gets a private view of init's mounts;
+    // keep the broker, the unprivileged daemon, and all other processes unchanged.
+    if (enter_clean_mount_namespace()) {
+      dprintf(STDERR_FILENO, "su: system mount namespace unavailable\n");
+      _exit(126);
+    }
     close_except(NULL, 0);
     clearenv();
     setenv("HOME", "/data/local/tmp", 1);
