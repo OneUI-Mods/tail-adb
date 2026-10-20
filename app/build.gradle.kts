@@ -25,14 +25,15 @@ val distribution =
 
 android {
     namespace = "net.ryuya_dev.tailadb"
-    compileSdk = 36
+    compileSdk = 37
+    buildToolsVersion = "37.0.0"
     ndkVersion = "28.2.13676358"
     defaultConfig {
         applicationId = "net.ryuya_dev.tailadb"
         minSdk = 36
-        targetSdk = 36
-        versionCode = 4
-        versionName = "0.2.2"
+        targetSdk = 37
+        versionCode = 5
+        versionName = "0.2.3"
         if (android17Validation.get() == "true") versionNameSuffix = "-android17-validation"
     }
     signingConfigs {

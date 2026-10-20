@@ -2,7 +2,7 @@
 
 ## ビルド
 
-JDK 21、Android SDK 36、NDK 28.2.13676358を用意し、Android Studioで開きます。作業フォルダは `~/Documents/TailAdb`、パッケージは `net.ryuya_dev.tailadb` です。
+JDK 21、Android SDK 37、NDK 28.2.13676358を用意し、Android Studioで開きます。作業フォルダは `~/Documents/TailAdb`、パッケージは `net.ryuya_dev.tailadb` です。
 
 ```sh
 ./gradlew :app:assembleRelease :app:lintRelease
