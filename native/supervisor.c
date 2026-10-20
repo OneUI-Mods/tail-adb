@@ -35,6 +35,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "daemon_profiles.h"
+
 #define TOKEN_BYTES 32
 #define MAX_REQUEST 4096
 #define MAX_ALLOWED 32
@@ -275,8 +277,7 @@ static bool supported_daemon(void) {
               !strcmp(path, "/apex/com.android.adbd/bin/adbd") &&
               fscanf(f, "%64s %1023s", auth, path) == 2 &&
               !strcmp(path, "/system/lib64/libadbd_auth.so") &&
-              !strcmp(adbd, "459d1f67760789bdf8eb5a7a5c1bbe409d5dd3837d408ce4d7d14e496fcb8cbb") &&
-              !strcmp(auth, "d078a2db5dcfafa23c2fa6629b28fe9c673ec57b103fb396e7b8f16763329a2f");
+              tailadb_daemon_supported(adbd, auth);
   return pclose(f) == 0 && good;
 }
 

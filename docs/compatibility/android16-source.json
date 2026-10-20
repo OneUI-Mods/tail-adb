@@ -1,0 +1,9 @@
+{
+  "source_commit": "a6dce04e7a724ad9d74feac1e7cd4a0cc9185861",
+  "android": 16,
+  "files": {
+    "native/policy.c": "6597568c6bd2a0e39cd1f3338c566a95762797f5aebaefb7b23e4e94fcceb101",
+    "native/supervisor.c": "7d245f60f954c89bbee007a30ea088af7e367ae0276935dc5d49e41a6b98564a",
+    "native/su_client.c": "524a466fe59defa0d67fe0b061a1f528e280b8d6de999492bf705f4c4f9945e5"
+  }
+}
