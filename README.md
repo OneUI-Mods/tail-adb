@@ -44,6 +44,8 @@ adb install -r TailAdb-0.2.1.apk
 
 ## 使い方
 
+Android 17 / ADB Wi-Fi 2.0世代への互換処理は、現在検証用ビルドへ分離しています。Tailscale専用の接続方式とAndroid 16の対応を維持しています。17の実機確認は未完了であり、通常配布版の対応済み環境にはまだ含めていません。[対応状況](docs/compatibility/android17.md)
+
 1. 端末とPCをTailscaleへ接続します。
 2. Tail ADBを開き、必要なら設定からTailscaleを動かしているAndroidユーザーを選びます。
 3. 「ADBを開始」を押します。ポートの初期値は5555です。

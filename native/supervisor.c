@@ -36,6 +36,7 @@
 #include <unistd.h>
 
 #include "daemon_profiles.h"
+#include "status_record.h"
 
 #define TOKEN_BYTES 32
 #define MAX_REQUEST 4096
@@ -266,19 +267,18 @@ static enum vpn_result vpn_info(struct vpn *out, unsigned user_id, struct vpn_sc
   return VPN_READY;
 }
 
-static bool supported_daemon(void) {
+static const struct tailadb_daemon_profile *supported_daemon(void) {
   FILE *f = popen("/system/bin/sha256sum /apex/com.android.adbd/bin/adbd "
                   "/system/lib64/libadbd_auth.so",
                   "r");
   if (!f)
-    return false;
+    return NULL;
   char adbd[65] = {0}, auth[65] = {0}, path[PATH_MAX] = {0};
   bool good = fscanf(f, "%64s %1023s", adbd, path) == 2 &&
               !strcmp(path, "/apex/com.android.adbd/bin/adbd") &&
               fscanf(f, "%64s %1023s", auth, path) == 2 &&
-              !strcmp(path, "/system/lib64/libadbd_auth.so") &&
-              tailadb_daemon_supported(adbd, auth);
-  return pclose(f) == 0 && good;
+              !strcmp(path, "/system/lib64/libadbd_auth.so");
+  return pclose(f) == 0 && good ? tailadb_daemon_profile(adbd, auth) : NULL;
 }
 
 static int copy_daemon(const char *destination) {
@@ -768,32 +768,89 @@ static bool safe_control_directory(const char *directory) {
   return !lstat(directory, &st) && S_ISDIR(st.st_mode) && st.st_uid == 0 && !(st.st_mode & 066);
 }
 
+static bool process_has_file(pid_t pid, const char *path);
+
+static bool read_control_record(const char *directory, const char *name, char *buffer,
+                                size_t capacity) {
+  char path[PATH_MAX];
+  if (snprintf(path, sizeof(path), "%s/%s", directory, name) >= (int)sizeof(path))
+    return false;
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0)
+    return false;
+  struct stat st;
+  size_t used = 0;
+  bool valid = !fstat(fd, &st) && S_ISREG(st.st_mode) && st.st_uid == 0 && !(st.st_mode & 0022) &&
+               st.st_size > 0 && st.st_size < (off_t)capacity;
+  while (valid && used < capacity - 1) {
+    ssize_t count = read(fd, buffer + used, capacity - used - 1);
+    if (!count)
+      break;
+    if (count < 0) {
+      if (errno == EINTR)
+        continue;
+      valid = false;
+      break;
+    }
+    used += (size_t)count;
+  }
+  close(fd);
+  buffer[used] = 0;
+  return valid && used == (size_t)st.st_size && !memchr(buffer, 0, used);
+}
+
+static bool backend_owns_lock(const char *directory) {
+  char text[32], path[PATH_MAX];
+  if (!read_control_record(directory, "pid", text, sizeof(text)))
+    return false;
+  char *end;
+  errno = 0;
+  long pid = strtol(text, &end, 10);
+  if (errno || pid <= 1 || pid > INT_MAX || (*end && strcmp(end, "\n")))
+    return false;
+  snprintf(path, sizeof(path), "/proc/%ld/status", pid);
+  int fd = open(path, O_RDONLY | O_CLOEXEC);
+  char status[2048] = {0};
+  ssize_t size = fd < 0 ? -1 : read(fd, status, sizeof(status) - 1);
+  if (fd >= 0)
+    close(fd);
+  if (size <= 0 || !strstr(status, "\nUid:\t0\t0\t0\t0\n"))
+    return false;
+  snprintf(path, sizeof(path), "%s/lock", directory);
+  fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0)
+    return false;
+  int locked = flock(fd, LOCK_EX | LOCK_NB);
+  bool held = locked < 0 && (errno == EWOULDBLOCK || errno == EAGAIN);
+  if (!locked)
+    flock(fd, LOCK_UN);
+  close(fd);
+  return held && process_has_file((pid_t)pid, path) && !kill((pid_t)pid, 0);
+}
+
 static int status_backend(const char *directory) {
   if (!safe_control_directory(directory)) {
     event("STOPPED", "");
     return 0;
   }
-  char path[PATH_MAX];
-  snprintf(path, sizeof(path), "%s/status", directory);
-  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-  if (fd < 0) {
+  char buffer[1024];
+  if (!read_control_record(directory, "status", buffer, sizeof(buffer))) {
     event("STOPPED", "");
     return 0;
   }
-  char buffer[1024];
-  ssize_t size;
-  while ((size = read(fd, buffer, sizeof(buffer))) > 0)
-    if (write(STDOUT_FILENO, buffer, (size_t)size) != size)
-      break;
-  close(fd);
-  snprintf(path, sizeof(path), "%s/peer", directory);
-  fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-  if (fd >= 0) {
-    while ((size = read(fd, buffer, sizeof(buffer))) > 0)
-      if (write(STDOUT_FILENO, buffer, (size_t)size) != size)
-        break;
-    close(fd);
+  enum tailadb_status_record kind = tailadb_status_record(buffer);
+  if (kind == TAILADB_STATUS_INVALID ||
+      (kind == TAILADB_STATUS_ACTIVE && !backend_owns_lock(directory))) {
+    event("STOPPED", "");
+    return 0;
   }
+  bool listening = !strncmp(buffer, "TAILADB\tLISTENING\t", 18);
+  fputs(buffer, stdout);
+  if (listening && backend_owns_lock(directory) &&
+      read_control_record(directory, "peer", buffer, sizeof(buffer)) &&
+      (!strncmp(buffer, "TAILADB\tPEER\t", 13) || !strncmp(buffer, "TAILADB\tPEER_CLOSED\t", 20)) &&
+      tailadb_status_record(buffer) != TAILADB_STATUS_INVALID)
+    fputs(buffer, stdout);
   return 0;
 }
 
@@ -890,10 +947,6 @@ int main(int argc, char **argv) {
     event("ERROR_ARGUMENT", "");
     return 2;
   }
-  if (!supported_daemon()) {
-    event("ERROR_COMPAT", "");
-    return 1;
-  }
   const char *shim = argv[argument], *su_source = argv[argument + 1],
              *directory = argv[argument + 2];
   char *end;
@@ -903,8 +956,8 @@ int main(int argc, char **argv) {
   struct authorization shell_authorization = {0};
   struct authorization root_authorization = {0};
   if (*end || *user_end || port < 1024 || port > 65535 || user_id < 0 || user_id > 21474 ||
-      strlen(directory) > 300 || strlen(shim) > 500 || strlen(su_source) > 500 ||
-      !parse_authorization(argv[argument + 5], &shell_authorization) ||
+      strcmp(directory, "/data/local/tmp/net.ryuya_dev.tailadb") || strlen(shim) > 500 ||
+      strlen(su_source) > 500 || !parse_authorization(argv[argument + 5], &shell_authorization) ||
       !parse_authorization(argv[argument + 6], &root_authorization)) {
     event("ERROR_ARGUMENT", "");
     return 2;
@@ -944,9 +997,6 @@ int main(int argc, char **argv) {
     event("ERROR_STORAGE", "");
     return 3;
   }
-  snprintf(status_path, sizeof(status_path), "%s/status", directory);
-  snprintf(peer_path, sizeof(peer_path), "%s/peer", directory);
-  unlink(peer_path);
   char lockpath[400];
   snprintf(lockpath, sizeof(lockpath), "%s/lock", directory);
   int lock = open(lockpath, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
@@ -954,6 +1004,11 @@ int main(int argc, char **argv) {
     event("ERROR_ALREADY_RUNNING", "");
     return 3;
   }
+  // Only the lock owner may replace status/peer. Compatibility errors must be
+  // persisted too, otherwise the UI can resurrect a previous WAITING state.
+  snprintf(status_path, sizeof(status_path), "%s/status", directory);
+  snprintf(peer_path, sizeof(peer_path), "%s/peer", directory);
+  unlink(peer_path);
   char pidpath[400];
   snprintf(pidpath, sizeof(pidpath), "%s/pid", directory);
   int pidfile = open(pidpath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
@@ -963,6 +1018,12 @@ int main(int argc, char **argv) {
       close(pidfile);
     event("ERROR_STORAGE", "");
     return 3;
+  }
+  event("STARTING", "");
+  const struct tailadb_daemon_profile *daemon_profile = supported_daemon();
+  if (!daemon_profile) {
+    event("ERROR_COMPAT", "");
+    return 1;
   }
   char binary[400];
   snprintf(binary, sizeof(binary), "%s/adbd", directory);
@@ -1092,6 +1153,7 @@ int main(int argc, char **argv) {
           setenv("TAILADB_PORT", number, 1);
           setenv("TAILADB_SU_DIR", directory, 1);
           setenv("TAILADB_ALLOWED_SHELL", argv[argument + 5], 1);
+          setenv("TAILADB_AUTH_ABI", daemon_profile->policy_abi, 1);
           setenv("LD_PRELOAD", shim, 1);
           setenv("LD_LIBRARY_PATH", "/apex/com.android.adbd/lib64:/system/lib64", 1);
           unsetenv("ANDROID_SOCKET_adbd");

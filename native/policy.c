@@ -27,6 +27,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "auth_compat.h"
+
 #define TOKEN_BYTES 32
 #define MAX_ALLOWED 32
 #define LOG_TAG "TailAdbPolicy"
@@ -73,14 +75,10 @@ struct local_auth_context {
   uint32_t marker;
 };
 
-struct auth_callbacks_v1 {
-  uint32_t version;
-  void (*key_authorized)(void *opaque, uint64_t id);
-  void (*key_removed)(const char *public_key, size_t length);
-};
 static struct local_auth_context auth_context = {.marker = 0x54414442};
 static struct auth_callbacks_v1 auth_callbacks;
 static uint64_t next_auth_id = 1;
+static enum tailadb_auth_abi auth_abi;
 
 static bool own_process(void) {
   return configured && getpid() == daemon_pid;
@@ -270,8 +268,7 @@ static bool load_authorized_keys(char **contents, size_t *length) {
 
 void *adbd_auth_new(void *callbacks) {
   const struct auth_callbacks_v1 *version = callbacks;
-  if (!own_process() || !version || version->version != 1 || !version->key_authorized ||
-      !version->key_removed)
+  if (!own_process() || !tailadb_auth_callbacks_valid(auth_abi, version))
     die(123);
   auth_callbacks = *version;
   AUTH_INFO("auth new version=%u", version->version);
@@ -378,7 +375,9 @@ void adbd_auth_tls_device_disconnected(void *context, int32_t type, uint64_t id)
 }
 
 uint32_t adbd_auth_get_max_version(void) {
-  return 1;
+  if (!own_process() || !tailadb_auth_version(auth_abi))
+    die(123);
+  return tailadb_auth_version(auth_abi);
 }
 
 bool adbd_auth_supports_feature(int32_t feature) {
@@ -390,6 +389,31 @@ void adbd_auth_send_tls_server_port(void *context, uint16_t port) {
   (void)port;
   if (!own_process() || context != &auth_context)
     die(123);
+}
+
+// API 37 imports these functions even when using V1 authorization. Do not pass
+// our private context to libadbd_auth, which expects its own C++ object. An
+// isolated acceptfd listener must never register a LAN discovery service.
+uint32_t adbd_auth_register_service(void *context, const char *instance, const char *service,
+                                    uint16_t port) {
+  (void)port;
+  if (!own_process() || context != &auth_context)
+    die(123);
+  if (!tailadb_mdns_names_valid(instance, service))
+    return 1; // ADBD_AUTH_REGISTER_BAD_NAME
+  AUTH_WARN("unexpected mDNS registration in isolated listener");
+  die(123);
+  return 1;
+}
+
+uint32_t adbd_auth_unregister_service(void *context, const char *instance, const char *service) {
+  if (!own_process() || context != &auth_context)
+    die(123);
+  if (!tailadb_mdns_names_valid(instance, service))
+    return 1; // ADBD_AUTH_UNREGISTER_BAD_NAME
+  AUTH_WARN("unexpected mDNS removal in isolated listener");
+  die(123);
+  return 1;
 }
 
 static int index_of(const char *name) {
@@ -414,8 +438,9 @@ __attribute__((constructor)) static void configure(void) {
   const char *ip = getenv("TAILADB_IP"), *port = getenv("TAILADB_PORT"), *fd = getenv("TAILADB_FD"),
              *control = getenv("TAILADB_CONTROL_FD"), *su_directory = getenv("TAILADB_SU_DIR"),
              *shell_hosts = getenv("TAILADB_ALLOWED_SHELL");
+  auth_abi = tailadb_auth_abi(getenv("TAILADB_AUTH_ABI"));
   if (!ip || !port || !fd || !control || !su_directory || !shell_hosts ||
-      !parse_allowed_shell(shell_hosts) ||
+      auth_abi == TAILADB_AUTH_UNKNOWN || !parse_allowed_shell(shell_hosts) ||
       strcmp(su_directory, "/data/local/tmp/net.ryuya_dev.tailadb"))
     die(120);
   control_fd = atoi(control);
@@ -455,6 +480,7 @@ __attribute__((constructor)) static void configure(void) {
   unsetenv("TAILADB_FD");
   unsetenv("TAILADB_SU_DIR");
   unsetenv("TAILADB_ALLOWED_SHELL");
+  unsetenv("TAILADB_AUTH_ABI");
 }
 
 const prop_info *__system_property_find(const char *name) {

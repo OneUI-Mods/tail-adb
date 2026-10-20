@@ -25,5 +25,6 @@
     "adbd_auth_unregister_service"
   ],
   "runtime_verified": false,
-  "warning": "Symbol presence does not establish function ABI or runtime compatibility. Android 17 profile remains disabled."
+  "warning": "Symbol presence does not establish function ABI or runtime compatibility. Android 17 profile remains disabled.",
+  "record_kind": "Pre-port baseline: policy at source commit 6605709"
 }

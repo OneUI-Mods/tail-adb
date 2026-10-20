@@ -2,6 +2,15 @@ import java.util.Properties
 
 plugins { id("com.android.application") }
 
+val android17Validation = providers.gradleProperty("tailadbAndroid17Validation").orElse("false")
+
+check(android17Validation.get() in listOf("true", "false")) {
+    "tailadbAndroid17Validation must be true or false"
+}
+
+val nativeCompatibilityMode =
+    if (android17Validation.get() == "true") "android17-validation" else "release"
+
 val distribution =
     Properties().apply {
         providers.environmentVariable("TAILADB_SIGNING_PROPERTIES").orNull?.let { path ->
@@ -24,6 +33,7 @@ android {
         targetSdk = 36
         versionCode = 3
         versionName = "0.2.1"
+        if (android17Validation.get() == "true") versionNameSuffix = "-android17-validation"
     }
     signingConfigs {
         if (!distribution.isEmpty)
@@ -64,6 +74,7 @@ val compileNative =
     tasks.register<Exec>("compileTailAdbNative") {
         inputs.dir(rootProject.file("native"))
         inputs.file(rootProject.file("tools/build-native.sh"))
+        inputs.property("compatibilityMode", nativeCompatibilityMode)
         outputs.dir(nativeOutput)
         workingDir = rootProject.projectDir
         doFirst {
@@ -72,6 +83,7 @@ val compileNative =
                 "tools/build-native.sh",
                 nativeSdk.get().asFile.resolve("ndk/28.2.13676358").absolutePath,
                 nativeOutput.get().asFile.absolutePath,
+                nativeCompatibilityMode,
             )
         }
     }

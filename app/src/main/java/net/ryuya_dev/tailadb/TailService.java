@@ -91,12 +91,12 @@ public final class TailService extends Service {
                 : new ProcessBuilder("su", "--ksu-no-new-privs", "-c", command))
             .redirectErrorStream(true)
             .start();
-    parse(context, process);
+    boolean nativeError = parse(context, process);
     if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
       process.destroyForcibly();
       throw new IOException("Root command timeout");
     }
-    if (process.exitValue() != 0) throw new IOException("Root command failed");
+    if (process.exitValue() != 0 && !nativeError) throw new IOException("Root command failed");
   }
 
   static void refreshState(android.content.Context context) {
@@ -112,8 +112,9 @@ public final class TailService extends Service {
     }
   }
 
-  private static void parse(android.content.Context context, java.lang.Process process)
+  private static boolean parse(android.content.Context context, java.lang.Process process)
       throws IOException {
+    boolean nativeError = false;
     try (BufferedReader reader =
         new BufferedReader(new InputStreamReader(process.getInputStream()))) {
       String line;
@@ -121,6 +122,7 @@ public final class TailService extends Service {
         if (!line.startsWith("TAILADB\t")) continue;
         String[] fields = line.split("\t", 3);
         if (fields.length < 2 || !fields[1].matches("[A-Z_]{2,40}")) continue;
+        nativeError |= fields[1].startsWith("ERROR_");
         if (fields[1].equals("PEER")) {
           String[] peer = fields.length > 2 ? fields[2].split("\t", 2) : new String[0];
           State.setPeer(context, peer.length > 0 ? peer[0] : "");
@@ -134,6 +136,7 @@ public final class TailService extends Service {
         }
       }
     }
+    return nativeError;
   }
 
   @Override

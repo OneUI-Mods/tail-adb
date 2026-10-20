@@ -51,6 +51,8 @@ adbd SHA-256：`459d1f67760789bdf8eb5a7a5c1bbe409d5dd3837d408ce4d7d14e496fcb8cbb
 
 未知のadbdは安全のため拒否します。OS更新への対応には、標準の認証・権限降格・acceptfdの動作を新しいバイナリで確認してから基準を更新してください。ハッシュだけを増やして対応済みと扱わないでください。
 
+Android 17 / ADB Wi-Fi 2.0世代の互換処理と検証用ビルドは[17の互換性記録](compatibility/android17.md)へ分離しています。通常ビルドのAndroid 16許可条件を広げる方式ではありません。`-PtailadbAndroid17Validation=true`は実機試験用であり、通常配布には使用しません。
+
 root境界はKernelSU `samsung-v1.0:KernelSU` version code 32664で検証しています。`su --ksu-no-new-privs`を提供しないroot実装では安全な開始条件を満たさないため対応外です。
 
 ## 参照した実装

@@ -8,6 +8,7 @@
 
 struct tailadb_daemon_profile {
   const char *label;
+  const char *policy_abi;
   bool verified;
   const char *adbd_sha256;
   const char *auth_sha256;
@@ -16,17 +17,27 @@ struct tailadb_daemon_profile {
 #include "profiles/android16.h"
 #include "profiles/android17.h"
 
-static inline bool tailadb_daemon_supported(const char *adbd, const char *auth) {
+#ifndef TAILADB_ANDROID17_VALIDATION
+#define TAILADB_ANDROID17_VALIDATION 0
+#endif
+
+static inline const struct tailadb_daemon_profile *tailadb_daemon_profile(const char *adbd,
+                                                                          const char *auth) {
   if (!adbd || !auth)
-    return false;
+    return NULL;
   const struct tailadb_daemon_profile *profiles[] = {&tailadb_android16, &tailadb_android17};
   for (size_t i = 0; i < sizeof(profiles) / sizeof(profiles[0]); i++) {
     const struct tailadb_daemon_profile *profile = profiles[i];
-    if (profile->verified && !strcmp(adbd, profile->adbd_sha256) &&
-        !strcmp(auth, profile->auth_sha256))
-      return true;
+    bool permitted =
+        profile->verified || (TAILADB_ANDROID17_VALIDATION && profile == &tailadb_android17);
+    if (permitted && !strcmp(adbd, profile->adbd_sha256) && !strcmp(auth, profile->auth_sha256))
+      return profile;
   }
-  return false;
+  return NULL;
+}
+
+static inline bool tailadb_daemon_supported(const char *adbd, const char *auth) {
+  return tailadb_daemon_profile(adbd, auth) != NULL;
 }
 
 #endif
