@@ -26,7 +26,9 @@ def endpoint(value):
             raise ValueError()
         return str(ip), port
     except ValueError as error:
-        raise argparse.ArgumentTypeError("Use a Tailscale IPv4:port, e.g. 100.64.0.10:5555") from error
+        raise argparse.ArgumentTypeError(
+            "Use a Tailscale IPv4:port, e.g. 100.64.0.10:5555"
+        ) from error
 
 
 def phone_health(address, port):
@@ -73,8 +75,15 @@ class OwnedServer:
             temporary.bind(("127.0.0.1", 0))
             self.port = temporary.getsockname()[1]
         self.process = subprocess.Popen(
-            [self.adb, "-L", f"tcp:localhost:{self.port}", "--one-device", self.device,
-             "server", "nodaemon"],
+            [
+                self.adb,
+                "-L",
+                f"tcp:localhost:{self.port}",
+                "--one-device",
+                self.device,
+                "server",
+                "nodaemon",
+            ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -93,30 +102,68 @@ class OwnedServer:
         self.close()
         raise TimeoutError("Dedicated ADB server did not start")
 
-    def run(self, *arguments):
+    def connection(self):
         if self.process is None or self.process.poll() is not None:
             raise OSError("Dedicated ADB server is not running")
-        result = subprocess.run(
-            [self.adb, "-H", "127.0.0.1", "-P", str(self.port), *arguments],
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=4,
-            check=False,
-            env=self.environment,
-        )
-        if result.returncode:
-            return ""
-        return result.stdout.decode("utf-8", errors="replace").strip()
+        connection = socket.create_connection(("127.0.0.1", self.port), timeout=2)
+        connection.settimeout(2)
+        return connection
+
+    @staticmethod
+    def receive(connection, length):
+        data = bytearray()
+        while len(data) < length:
+            chunk = connection.recv(length - len(data))
+            if not chunk:
+                raise OSError("ADB server closed the request")
+            data.extend(chunk)
+        return bytes(data)
+
+    def request(self, connection, service):
+        payload = service.encode("ascii")
+        connection.sendall(f"{len(payload):04x}".encode("ascii") + payload)
+        if self.receive(connection, 4) != b"OKAY":
+            raise OSError("ADB server rejected the request")
+
+    def host(self, service):
+        # Speak the documented smart-socket protocol directly. Unlike invoking an adb client,
+        # this cannot auto-start/adopt an unowned server if the owned process dies mid-request.
+        with self.connection() as connection:
+            self.request(connection, service)
+            length = int(self.receive(connection, 4), 16)
+            if length > 4096:
+                raise ValueError("ADB response exceeds the protocol bound")
+            return self.receive(connection, length).decode("ascii")
 
     def probe(self):
         try:
-            return self.run("-s", self.device, "shell", "echo", "TAILADB_OK") == "TAILADB_OK"
-        except (OSError, subprocess.TimeoutExpired):
+            with self.connection() as connection:
+                self.request(connection, "host:transport:" + self.device)
+                self.request(connection, "shell:echo TAILADB_OK")
+                output = bytearray()
+                while len(output) <= 256:
+                    data = connection.recv(257 - len(output))
+                    if not data:
+                        return output.strip() == b"TAILADB_OK"
+                    output.extend(data)
+                return False
+        except (OSError, ValueError):
             return False
 
     def reconnect(self):
-        self.run("disconnect", self.device)
-        return "connected to" in self.run("connect", self.device)
+        try:
+            self.host("host:disconnect:" + self.device)
+        except OSError:
+            # An absent old transport is a normal first-connect state, not a recovery failure.
+            pass
+        return "connected to" in self.host("host:connect:" + self.device)
+
+    def pending_auth(self):
+        for line in self.host("host:devices").splitlines():
+            fields = line.split()
+            if len(fields) >= 2 and fields[0] == self.device:
+                return fields[1] == "unauthorized"
+        return False
 
     def close(self):
         if self.process is not None:
@@ -134,6 +181,7 @@ class OwnedServer:
 class Recovery:
     failures: int = 0
     restart_after: float = 0
+    auth_since: float | None = None
 
     def step(self, state, server, now):
         if state in ("WAITING", "OTHER_HOST"):
@@ -142,18 +190,39 @@ class Recovery:
         server.start()
         if server.probe():
             self.failures = 0
+            self.auth_since = None
             return "CONNECTED"
-        server.reconnect()
-        if server.probe():
-            self.failures = 0
-            return "RECONNECTED"
+        try:
+            if server.pending_auth():
+                if self.auth_since is None:
+                    self.auth_since = now
+                if now - self.auth_since < 20:
+                    return "WAITING_FOR_ADB_AUTH"
+            server.reconnect()
+            if server.probe():
+                self.failures = 0
+                self.auth_since = None
+                return "RECONNECTED"
+            if server.pending_auth():
+                if self.auth_since is None:
+                    self.auth_since = now
+                if now - self.auth_since < 20:
+                    return "WAITING_FOR_ADB_AUTH"
+        except (OSError, subprocess.TimeoutExpired):
+            # A wedged host server can hang even its disconnect command. This is an ADB failure,
+            # not an unreachable phone: count it so the owned server is eventually replaced.
+            pass
         self.failures += 1
         if self.failures >= 2 and now >= self.restart_after:
             server.close()
             server.start()
-            server.reconnect()
+            try:
+                server.reconnect()
+            except (OSError, subprocess.TimeoutExpired):
+                pass
             self.restart_after = now + 30
             self.failures = 0
+            self.auth_since = None
             return "SERVER_RESTARTED"
         return "ADB_NOT_RESPONDING"
 
@@ -173,8 +242,10 @@ def main():
     previous = None
     delay = 1
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+
     def stop(_signal, _frame):
         raise KeyboardInterrupt()
+
     signal.signal(signal.SIGTERM, stop)
     try:
         while True:

@@ -13,20 +13,23 @@ SIGNER = "429de1280138eb96207ea61c6c19a36d2a83404e4654ce52d14e1aba43abf980"
 
 
 def run(*args, capture=False, env=None):
-    return subprocess.run([str(a) for a in args], cwd=ROOT, check=True,
-                          text=True, capture_output=capture, env=env)
+    return subprocess.run(
+        [str(a) for a in args], cwd=ROOT, check=True, text=True, capture_output=capture, env=env
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-ref", default="HEAD")
     args = parser.parse_args()
-    run("git", "diff", "--exit-code", args.source_ref, "--", "app", "native", "tools/build-native.sh")
-    if run("git", "ls-files", "--others", "--exclude-standard", "--", "app", "native", capture=True).stdout:
-        raise RuntimeError("Commit app and native sources before packaging")
+    run("git", "diff", "--exit-code", args.source_ref, "--", ".")
+    if run("git", "ls-files", "--others", "--exclude-standard", capture=True).stdout:
+        raise RuntimeError("Commit release sources and companion before packaging")
     environment = os.environ.copy()
-    environment.setdefault("TAILADB_SIGNING_PROPERTIES",
-                           str(Path.home() / ".android/keystores/tail-adb-signing.properties"))
+    environment.setdefault(
+        "TAILADB_SIGNING_PROPERTIES",
+        str(Path.home() / ".android/keystores/tail-adb-signing.properties"),
+    )
     if not Path(environment["TAILADB_SIGNING_PROPERTIES"]).is_file():
         raise RuntimeError("Missing private signing properties; see docs/releasing.md")
     sdk = Path(environment.get("ANDROID_HOME", Path.home() / "Library/Android/sdk"))
@@ -42,14 +45,24 @@ def main():
         raise RuntimeError("Validation builds are not distributable")
     apk = output / element["outputFile"]
     badging = run(tools / "aapt2", "dump", "badging", apk, capture=True).stdout
-    if ("name='net.ryuya_dev.tailadb'" not in badging or "targetSdkVersion:'37'" not in badging
-            or "application-debuggable" in badging):
+    if (
+        "name='net.ryuya_dev.tailadb'" not in badging
+        or "targetSdkVersion:'37'" not in badging
+        or "application-debuggable" in badging
+    ):
         raise RuntimeError("Wrong application, target SDK, or debuggable APK")
-    manifest = run(tools / "aapt2", "dump", "xmltree", apk, "--file", "AndroidManifest.xml", capture=True).stdout
-    if any(word in manifest.lower() for word in ["fixture", "testactivity", "probeactivity", "instrumentation"]):
+    manifest = run(
+        tools / "aapt2", "dump", "xmltree", apk, "--file", "AndroidManifest.xml", capture=True
+    ).stdout
+    if any(
+        word in manifest.lower()
+        for word in ["fixture", "testactivity", "probeactivity", "instrumentation"]
+    ):
         raise RuntimeError("Test fixture in APK")
     run(tools / "zipalign", "-c", "-P", "16", "4", apk)
-    signature = run(tools / "apksigner", "verify", "--verbose", "--print-certs", apk, capture=True).stdout
+    signature = run(
+        tools / "apksigner", "verify", "--verbose", "--print-certs", apk, capture=True
+    ).stdout
     if SIGNER not in signature:
         raise RuntimeError("Distribution signer mismatch")
     with zipfile.ZipFile(apk) as archive:
@@ -64,13 +77,20 @@ def main():
     target.write_bytes(apk.read_bytes())
     (dist / f"TailAdb-{version}-signature.txt").write_text(signature)
     source = dist / f"TailAdb-{version}-source.zip"
-    run("git", "archive", "--format=zip", f"--prefix=TailAdb-{version}/",
-        f"--output={source}", args.source_ref)
+    run(
+        "git",
+        "archive",
+        "--format=zip",
+        f"--prefix=TailAdb-{version}/",
+        f"--output={source}",
+        args.source_ref,
+    )
     companion = dist / "tailadb_watch.py"
     companion.write_bytes((ROOT / "tools/tailadb_watch.py").read_bytes())
     files = [target, source, companion]
-    (dist / f"SHA256SUMS-{version}.txt").write_text("".join(
-        hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name + "\n" for p in files))
+    (dist / f"SHA256SUMS-{version}.txt").write_text(
+        "".join(hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name + "\n" for p in files)
+    )
     print("Signed and verified release:", target.name)
 
 

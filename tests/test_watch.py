@@ -34,6 +34,9 @@ class Server:
     def reconnect(self):
         self.actions.append("reconnect")
 
+    def pending_auth(self):
+        return False
+
 
 class WatchTest(unittest.TestCase):
     def test_endpoint_rejects_lan_shell_and_invalid_ports(self):
@@ -78,6 +81,25 @@ class WatchTest(unittest.TestCase):
         self.assertEqual(recovery.step("READY", server, 120), "CONNECTED")
         self.assertEqual(recovery.failures, 0)
 
+    def test_hung_disconnect_still_restarts_owned_server(self):
+        server = Server([False, False])
+        recovery = watch.Recovery()
+        with patch.object(
+            server, "reconnect", side_effect=watch.subprocess.TimeoutExpired("adb", 4)
+        ):
+            self.assertEqual(recovery.step("CHECK_ADB_SERVER", server, 100), "ADB_NOT_RESPONDING")
+            self.assertEqual(recovery.step("CHECK_ADB_SERVER", server, 105), "SERVER_RESTARTED")
+        self.assertEqual(server.actions.count("close"), 1)
+
+    def test_auth_handshake_is_not_reset_on_every_poll(self):
+        server = Server([False, False, True])
+        recovery = watch.Recovery()
+        with patch.object(server, "pending_auth", return_value=True):
+            self.assertEqual(recovery.step("READY", server, 100), "WAITING_FOR_ADB_AUTH")
+            self.assertEqual(recovery.step("READY", server, 102), "WAITING_FOR_ADB_AUTH")
+        self.assertEqual(server.actions, ["start", "start"])
+        self.assertEqual(recovery.step("READY", server, 105), "CONNECTED")
+
     def receive(self, payload):
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
@@ -99,12 +121,18 @@ class WatchTest(unittest.TestCase):
             thread.join(timeout=3)
 
     def test_actual_tcp_health_record(self):
-        self.assertEqual(self.receive(b"TAILADB_HEALTH\t1\tCHECK_ADB_SERVER\t42\n"),
-                         ("CHECK_ADB_SERVER", 42))
+        self.assertEqual(
+            self.receive(b"TAILADB_HEALTH\t1\tCHECK_ADB_SERVER\t42\n"), ("CHECK_ADB_SERVER", 42)
+        )
 
     def test_malformed_and_unauthorized_tcp_are_not_ready(self):
-        for record in [b"", b"HELLO\n", b"TAILADB_HEALTH\t2\tREADY\t1\n",
-                       b"TAILADB_HEALTH\t1\tREADY\t1\nextra", b"x" * 128]:
+        for record in [
+            b"",
+            b"HELLO\n",
+            b"TAILADB_HEALTH\t2\tREADY\t1\n",
+            b"TAILADB_HEALTH\t1\tREADY\t1\nextra",
+            b"x" * 128,
+        ]:
             with self.assertRaises(ValueError):
                 self.receive(record)
 
@@ -124,6 +152,52 @@ class WatchTest(unittest.TestCase):
             server.close()
             child.terminate.assert_called_once()
             self.assertNotIn("kill-server", command)
+
+    def test_smart_socket_probe_with_fragmented_responses(self):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        server = watch.OwnedServer("adb", "100.64.0.10:5555")
+        server.port = listener.getsockname()[1]
+        server.process = unittest.mock.Mock()
+        server.process.poll.return_value = None
+        requests = []
+
+        def reply():
+            try:
+                with listener.accept()[0] as client:
+                    for expected in [b"host:transport:100.64.0.10:5555", b"shell:echo TAILADB_OK"]:
+                        length = int(server.receive(client, 4), 16)
+                        requests.append(server.receive(client, length))
+                        client.sendall(b"OK")
+                        client.sendall(b"AY")
+                    client.sendall(b"TAILADB_")
+                    client.sendall(b"OK\n")
+            finally:
+                listener.close()
+
+        thread = threading.Thread(target=reply, daemon=True)
+        thread.start()
+        self.assertTrue(server.probe())
+        thread.join(timeout=3)
+        self.assertEqual(requests, [b"host:transport:100.64.0.10:5555", b"shell:echo TAILADB_OK"])
+
+    def test_missing_owned_server_never_auto_starts_a_client_server(self):
+        server = watch.OwnedServer("adb", "100.64.0.10:5555")
+        with patch.object(watch.subprocess, "Popen") as popen:
+            self.assertFalse(server.probe())
+            popen.assert_not_called()
+
+    def test_first_connect_proceeds_when_no_old_transport_exists(self):
+        server = watch.OwnedServer("adb", "100.64.0.10:5555")
+        with patch.object(
+            server, "host", side_effect=[OSError("not connected"), "connected to device"]
+        ) as request:
+            self.assertTrue(server.reconnect())
+        self.assertEqual(
+            [call.args[0] for call in request.call_args_list],
+            ["host:disconnect:100.64.0.10:5555", "host:connect:100.64.0.10:5555"],
+        )
 
 
 if __name__ == "__main__":

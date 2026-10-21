@@ -56,3 +56,9 @@ root許可だけが残る壊れた設定はネイティブsupervisorが起動前
 - すべてのADBサブコマンド、複数端末からの競合、長時間Dozeは未網羅です。
 
 ログは公開鍵本文、秘密鍵、セッショントークンを出力しません。認証結果、接続元Tailscale IP、検証失敗の要約は`TailAdbPolicy`と`TailAdbSupervisor`タグで確認できます。
+
+## 0.2.4の追加確認
+
+状態通知TCPはADBと同じVPN拘束・shell許可元限定の読み取り専用窓口です。入力でコマンドやroot操作を実行する機能はありません。通知だけではhostのADB serverを終了せず、任意のPC companionが実際のADB応答を確認します。companionの停止対象は自身で起動したforeground子だけで、既存の共有serverは対象外です。同じ送信元IPの複数serverは判別できないため、利用前に同じ端末への共有接続を解放します。
+
+停止時はroot UID・lock FD・pidfdを組み合わせ、確認後のPID再利用による誤停止を防ぎます。VPN検査の子プロセスには実行時間と出力の上限を設け、不完全な結果は拒否します。回線復旧でbackendを破棄するときは、transportと認可tokenも同時に消去します。認証・権限境界・Android 16/17のバイナリ許可条件は維持しています。追加試験の範囲は[検証記録](testing.md)に分けています。

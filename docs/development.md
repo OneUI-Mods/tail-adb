@@ -39,7 +39,13 @@ shell起動時だけトークンとbroker FDを環境へ渡し、PATHの先頭�
 
 ADBのRSA challenge/responseは維持しますが、Samsung実機の`u:r:adbd:s0`からclassic `/data/misc/adb/adb_keys`を読む経路は拒否されました。そこで未知キーの認証callbackでは、現在accept中のTailscale IPがアプリのshell許可リストにある場合だけ、そのセッションを承認します。未許可IPは`unauthorized`のままです。公開鍵をシステム鍵ストアやアプリ設定へ保存せず、秘密鍵、公開鍵本文、セッショントークンをログへ出しません。root許可はshell許可の部分集合として別に検査します。
 
-終了はアプリがroot helperの `--stop` を呼び、root所有PIDと実プロセスのUIDを検査してSIGTERMを送ります。追加adbdはsupervisorの親死亡時にSIGKILLされます。UID降格で解除される親死亡通知は降格後に設定し直します。子の異常終了が3回に達すると停止します。VPNの更新はnetlinkイベントを受け、イベントで把握できない所有者の変化を15秒間隔の低頻度確認で補います。VPNインターフェース以外への接続はソケット自身の拘束で拒否します。
+終了はroot所有PID・UID・lock FDを検査し、pidfdで特定したプロセスへSIGTERMを送ります。3秒で終了しない場合だけ同じpidfdへSIGKILLを送ります。PID再利用による別プロセスの停止を防ぎます。追加adbdは親死亡時にSIGKILLされ、UID降格後にも親死亡通知を設定し直します。3回の短時間連続異常終了で停止し、60秒以上安定した後は失敗回数をリセットします。VPNインターフェース以外への接続はソケット自身の拘束で拒否します。
+
+回線復旧の期限・イベント集約・再試行・クラッシュ判定は `native/network_recovery.h` に分離しています。netlinkは250 msで集約し、確認は最短1秒間隔、通常は15秒の絶対期限で実行します。イベントやADB制御メッセージの連続受信で確認期限を延ばしません。VPN検査は固定argvで実行し、出力・実行時間・全体の検査予算に上限を設けます。一時的なbind失敗は1、2、4、8、15秒で再試行し、権限エラーやポート競合は停止します。VPN所有者・アドレス・インターフェース・network handleが変わらない回線変更ではbackendを維持します。再作成時はpeer、トークン、FDをまとめて破棄します。policyもprivate作業ディレクトリへコピーし、APK更新で古いnativeLibraryDirが消えても再起動できるようにしています。
+
+受け付けたADB TCPにはkeepaliveと45秒のTCP_USER_TIMEOUTを設定し、通信断で単一transport枠が永久に残らないようにしています。`--network-check <user>` は実際のTailscale所有UIDまで照合する読み取り専用操作です。Java側のroot呼び出しも非同期読み取りとタイムアウトを分離し、標準出力待ちで処理中状態が固定されることを防ぎます。
+
+PC連携のプロトコルと境界は[通信復旧の設計](network-recovery.md)を参照してください。
 
 ## 対応したバイナリ
 

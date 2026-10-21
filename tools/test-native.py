@@ -11,7 +11,13 @@ def main():
     root = Path(__file__).resolve().parent.parent
     compiler = os.environ.get("CC", "clang")
     with tempfile.TemporaryDirectory(prefix="tailadb-native-tests-") as folder:
-        for name in ("daemon_profiles", "auth_compat", "status_record", "network_recovery", "bounded_command"):
+        for name in (
+            "daemon_profiles",
+            "auth_compat",
+            "status_record",
+            "network_recovery",
+            "bounded_command",
+        ):
             for validation in (0, 1) if name == "daemon_profiles" else (0,):
                 output = Path(folder) / f"{name}-{validation}"
                 subprocess.run(
