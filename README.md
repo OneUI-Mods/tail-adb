@@ -23,7 +23,7 @@ Tail ADBは、root化したAndroid端末にTailscale経由だけで接続でき�
 
 ## 対応環境
 
-実機で確認した環境はGalaxy S26 Ultra `SM-S948Q`のAndroid 16 / One UI 8.0（`BP4A.251205.006.S948QOPS1AZHL`）とAndroid 17 / One UI 9（`CP2A.260605.016.S948QOPU1BZI9`、検証済みMainline ADB搭載）です。OS内の`adbd`と認証ライブラリが検証済みバイナリと一致しない場合は、安全のため開始しません。
+実機で確認した環境はGalaxy S26 Ultra `SM-S948Q`のAndroid 16 / One UI 8.5（`BP4A.251205.006.S948QOPS1AZHL`）とAndroid 17 / One UI 9（`CP2A.260605.016.S948QOPU1BZI9`、検証済みMainline ADB搭載）です。OS内の`adbd`と認証ライブラリが検証済みバイナリと一致しない場合は、安全のため開始しません。
 
 必要なもの：
 
@@ -36,10 +36,10 @@ Xposed、LSPosed、Vectorのスコープ設定は不要です。Tail ADBはroot�
 
 ## インストール
 
-[GitHub Releases](https://github.com/ryuya0124/tail-adb/releases)から最新のrelease APKをダウンロードしてインストールします。配布APKは専用のリリース鍵で署名しています。
+[GitHub Releases](https://github.com/OneUI-Mods/tail-adb/releases)から最新のrelease APKをダウンロードしてインストールします。配布APKは専用のリリース鍵で署名しています。
 
 ```sh
-adb install -r TailAdb-0.2.4-release.apk
+adb install -r TailAdb-VERSION-release.apk
 ```
 
 初回起動時にroot権限を自動で要求します。拒否されている場合は画面にエラーを表示するため、root管理アプリでTail ADBを許可してください。
@@ -85,21 +85,14 @@ python3 tailadb_watch.py --device 100.64.0.10:5555
 
 状態確認用TCP窓口はADBポートの次の番号です（65535の場合は65534）。Tailscale専用で、shell許可済みホストだけが状態を読み取れます。端末側からPCのADBを直接再起動する機能ではなく、PC上で起動したスクリプトが復旧を実行します。
 
-## セキュリティ上の境界
+## 接続と権限
 
-- 待受ソケットはTailscaleのインターフェース、ネットワーク、IPv4へ三重に固定します。
-- 未許可IPはADB shellへ入れません。shell許可済みでも、root許可がなければ同梱`su`は拒否され、KernelSUの`su`を絶対パスで実行してもUID 2000から昇格しません。
-- 同時ADBトランスポートを1つに制限し、接続元IPとroot認可セッションの取り違えを防ぎます。
-- OSのADBキー、システムプロパティ、system/vendor/product/bootパーティションは変更しません。
-- 設定やOS実装を安全に確認できない場合はfail-closedで停止します。
-- Tailscale側のACLと端末のroot管理環境も信頼境界に含まれます。
-
-制約と実機検証範囲は[検証記録](docs/testing.md)、脅威モデルと修正内容は[セキュリティ監査](docs/security-audit.md)に記録しています。
+待受はTailscale専用です。接続元ごとのshell許可とroot許可を分けて管理し、未許可の接続元へshellを開きません。Tailscaleの接続・ユーザー・端末側の対応を確認できない場合は停止します。詳しい境界と検証は[開発者向けガイド](docs/development.md)を参照してください。
 
 ## ソースとライセンス
 
 コードは[MIT License](LICENSE)です。依存ライブラリのライセンスはアプリ内の「ライセンス」と[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)で確認できます。Tailscale社の公式アプリではありません。
 
-ビルドと内部構造は[開発者向けガイド](docs/development.md)、検証対象ファームウェアは[実機基準](research/sm-s948q-android16-oneui8.md)を参照してください。
+ビルド・内部構造・検証環境は[開発者向けガイド](docs/development.md)を参照してください。
 
 自作ソースの書式と確認方法は[ソースの書式](docs/source-style.md)に記載しています。

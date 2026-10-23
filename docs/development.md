@@ -70,3 +70,11 @@ root境界はKernelSU `samsung-v1.0:KernelSU` version code 32664で検証して�
 - [Tailscale AndroidのVPN実装](https://github.com/tailscale/tailscale-android/blob/main/libtailscale/net.go)
 
 公開可能なファームウェア情報と再監査項目は[`research/sm-s948q-android16-oneui8.md`](../research/sm-s948q-android16-oneui8.md)に保存します。抽出した端末バイナリ、個人ログ、実際のIP・tailnet名、スクリーンショットは`artifacts/`だけに置き、Gitへ追加しません。依存ライセンスの一覧と実際のruntime依存が異なる場合はビルドを停止します。
+
+## ドキュメント一覧
+
+- [署名・配布手順](releasing.md)
+- [試験記録](testing.md)
+- [ソースの書式](source-style.md)
+- [Android 16の互換性](compatibility/android16.md)
+- [Android 17の互換性](compatibility/android17.md)
