@@ -207,7 +207,7 @@ class MainActivity : AppCompatActivity() {
                 Runnable {
                     val detail = State.prefs(this)!!.getString("detail", "")
                     val value: String? = detail!!.split("\t".toRegex()).toTypedArray()[0]
-                    if (!value!!.isBlank()) {
+                    if (!TextCompatibility.isBlank(value!!)) {
                         getSystemService<ClipboardManager?>(ClipboardManager::class.java)
                             .setPrimaryClip(ClipData.newPlainText("ADB", "adb connect " + value))
                         Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
@@ -399,7 +399,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setCurrentPeerAccess(preference: String, allowed: Boolean) {
         val peer = State.prefs(this)!!.getString("peer", "")
-        if (peer == null || peer.isBlank()) return
+        if (peer == null || TextCompatibility.isBlank(peer)) return
         setHostAccess(peer, preference, allowed)
     }
 
@@ -408,10 +408,7 @@ class MainActivity : AppCompatActivity() {
         val saved = preferences.getString(preference, "")
         val hosts = TreeSet<String?>()
         if (saved != null)
-            for (item in
-                saved.split(",".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()) if (
-                !item.isBlank()
-            )
+            for (item in TextCompatibility.split(saved, ",")) if (!TextCompatibility.isBlank(item))
                 hosts.add(item)
         if (allowed) hosts.add(peer) else hosts.remove(peer)
         val edit = preferences.edit().putString(preference, hosts.joinToString(","))
@@ -473,10 +470,7 @@ class MainActivity : AppCompatActivity() {
     private fun hostSet(saved: String?): TreeSet<String?> {
         val hosts = TreeSet<String?>()
         if (saved != null)
-            for (item in
-                saved.split(",".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()) if (
-                !item.isBlank()
-            )
+            for (item in TextCompatibility.split(saved, ",")) if (!TextCompatibility.isBlank(item))
                 hosts.add(item)
         return hosts
     }
@@ -744,7 +738,7 @@ class MainActivity : AppCompatActivity() {
         val shellAllowed = shellHosts.contains(peer)
         val peerAllowed = rootHosts.contains(peer)
         peerState!!.setText(
-            if (peer == null || peer.isBlank()) "—"
+            if (peer == null || TextCompatibility.isBlank(peer)) "—"
             else
                 (peer +
                     "  ·  " +
@@ -757,7 +751,7 @@ class MainActivity : AppCompatActivity() {
         shellToggle!!.setChecked(shellAllowed)
         rootToggle!!.setChecked(peerAllowed)
         renderingAccess = false
-        val havePeer: Boolean = peer != null && !peer.isBlank()
+        val havePeer: Boolean = peer != null && !TextCompatibility.isBlank(peer)
         shellToggle!!.setEnabled(havePeer && !TailService.running)
         rootToggle!!.setEnabled(havePeer && !TailService.running)
         renderAuthorizedHosts(shellHosts, rootHosts)
@@ -772,7 +766,9 @@ class MainActivity : AppCompatActivity() {
             android.view.View.OnClickListener { v: View? ->
                 MaterialAlertDialogBuilder(this)
                     .setTitle(R.string.technical)
-                    .setMessage(code + (if (detail!!.isBlank()) "" else "\n" + detail))
+                    .setMessage(
+                        code + (if (TextCompatibility.isBlank(detail!!)) "" else "\n" + detail)
+                    )
                     .setPositiveButton(android.R.string.ok, null)
                     .show()
             }
