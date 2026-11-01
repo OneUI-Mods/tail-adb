@@ -21,3 +21,13 @@ pipeはnonblockingかつclose-on-execで、shell子プロセスへ引き継が�
 `tools/test-native.py`は通知の競合、未認証データを読み取らないこと、通知の集約をsanitizer付きで検証する。Linuxでは待機PCの切断も検証する。`tests/session_wait_integration.c`は実際のpolicy関数とTCPを使い、利用中の接続の継続、引き継ぎ、新しいトークン、待機PCのキャンセルとトークン消去を確認する。
 
 AOSPの専用listener構造は[Android 17のソース](https://android.googlesource.com/platform/packages/modules/adb/+/refs/tags/android-17.0.0_r1/daemon/transport_socket_server.cpp)を参照。実機で確認した範囲は、別途保存する検証記録に従う。
+
+## Android 17の実機確認（2026-11-01）
+
+署名済み0.2.6を上書きし、設定を引き継いで専用backendだけを再開した。OS・system_server・SystemUIの再起動は行っていない。
+
+Mac側の再接続ガードを停止してWindowsの標準ADBから競合接続した。旧版では約10秒で37回の新規接続が発生したが、0.2.6では初回の接続を保持し、その後30秒の待機中に接続の作り直しはなかった。待機中も既存Macからroot操作できた。
+
+Macを切断するとWindowsが同じ接続のまま認証され、shell・root・push/pullが動作した。続いてWindows使用中にMacを接続してもWindowsの操作は継続でき、Windows切断後にMacのshell/rootが復帰した。shell/rootの許可リストとTailscaleユーザー設定は維持された。
+
+この確認ではWindowsへ常駐ガードを導入せず、Windows側のkeepalive間隔も変更していない。測定用の一時ADBサーバー・ファイルは除去した。通常の維持通信は残っており、放電電流や電池持ちの改善量は未測定。Android 16での今回版の再試験、長時間の競合待機、多数の待機PCは未確認。

@@ -88,3 +88,7 @@ Android 17 / One UI 9の対応済みSM-S948Qに署名済みrelease APKを上書�
 - `lintRelease`・`assembleRelease`・署名・16 KiB alignment・SDK 37・非debuggable・検証用Activity非混入を配布手順で確認。
 
 今回未検証：実際のWi-Fiとモバイル回線の往復、長時間圏外/Doze、Tailscaleアプリ自体の再起動、Android 16での今回版の再試験。Wi-Fi往復は接続できるAPを確認できていないため未実施。状態表示のデータ経路は実機確認したが、端末がロック中のため追加カードの目視確認は未実施。自動復帰の所要時間はネットワークや認証の状態によって変わる。
+
+## 0.2.6 端末側の競合接続待機
+
+詳細は[端末側の省電力対策](device-power.md)を参照。Android 17の対応済み実機でMacとWindowsの競合・双方向の引き継ぎ、root、ファイル転送を確認。端末本体とOSプロセスは再起動していない。Android 16の今回版、多数PC、長時間の待機は未確認。
