@@ -28,6 +28,7 @@
 #include <unistd.h>
 
 #include "auth_compat.h"
+#include "session_wait.h"
 #include "transport_health.h"
 
 #define TOKEN_BYTES 32
@@ -71,6 +72,7 @@ static unsigned next_transport_fd = 128;
 static uint8_t active_token[TOKEN_BYTES];
 static char shell_path[PATH_MAX + 160];
 static pthread_mutex_t session_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct tailadb_session_wait session_wait = {.read_fd = -1, .write_fd = -1};
 
 struct local_auth_context {
   uint32_t marker;
@@ -473,6 +475,8 @@ __attribute__((constructor)) static void configure(void) {
   parent_pid = getppid();
   configured = true;
   require_adbd_context();
+  if (!tailadb_session_wait_init(&session_wait))
+    die(120);
   unsetenv("LD_PRELOAD");
   unsetenv("LD_LIBRARY_PATH");
   unsetenv("TAILADB_CONTROL_FD");
@@ -666,11 +670,21 @@ static int accepted(int fd, const struct sockaddr *address, socklen_t length) {
     return -1;
   }
   pthread_mutex_lock(&session_lock);
-  if (active_fd >= 0) {
+  bool waiting = false;
+  while (active_fd >= 0) {
+    if (!waiting) {
+      AUTH_INFO("transport slot busy; parking unauthenticated connection");
+      waiting = true;
+    }
     pthread_mutex_unlock(&session_lock);
-    close(fd);
-    errno = EBUSY;
-    return -1;
+    int available = tailadb_session_wait_poll(&session_wait, fd);
+    if (available <= 0) {
+      int saved = available == 0 ? ECONNABORTED : errno;
+      close(fd);
+      errno = saved;
+      return -1;
+    }
+    pthread_mutex_lock(&session_lock);
   }
   if (getrandom(active_token, sizeof(active_token), 0) != sizeof(active_token)) {
     pthread_mutex_unlock(&session_lock);
@@ -740,6 +754,8 @@ static void session_closed(int fd) {
       active_peer = 0;
       token_valid = false;
       secure_zero(active_token, sizeof(active_token));
+      if (!tailadb_session_wait_signal(&session_wait))
+        die(127);
     }
     pthread_mutex_unlock(&session_lock);
   }

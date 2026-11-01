@@ -17,6 +17,7 @@ def main():
             "status_record",
             "network_recovery",
             "bounded_command",
+            "session_wait",
         ):
             for validation in (0, 1) if name == "daemon_profiles" else (0,):
                 output = Path(folder) / f"{name}-{validation}"
@@ -28,6 +29,7 @@ def main():
                         "-Wextra",
                         "-Werror",
                         "-fsanitize=address,undefined",
+                        "-pthread",
                         f"-DTAILADB_ANDROID17_VALIDATION={validation}",
                         str(root / "tests" / f"{name}_test.c"),
                         "-o",
