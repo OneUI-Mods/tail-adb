@@ -82,6 +82,10 @@ static struct local_auth_context auth_context = {.marker = 0x54414442};
 static struct auth_callbacks_v1 auth_callbacks;
 static uint64_t next_auth_id = 1;
 static enum tailadb_auth_abi auth_abi;
+// Initialized once by the root constructor, then read-only for this backend's lifetime.
+// The supervisor restarts this backend when Android's authorized-key file changes.
+static char *authorized_keys;
+static size_t authorized_keys_length;
 
 static bool own_process(void) {
   return configured && getpid() == daemon_pid;
@@ -297,24 +301,20 @@ void adbd_auth_get_public_keys(void *context,
                                void *opaque) {
   if (!own_process() || context != &auth_context || !callback)
     die(123);
-  char *contents = NULL;
-  size_t length = 0;
   AUTH_INFO("auth get public keys");
-  if (!load_authorized_keys(&contents, &length))
+  if (!authorized_keys)
     return;
   size_t start = 0;
   size_t delivered = 0;
-  while (start < length) {
+  while (start < authorized_keys_length) {
     size_t end = start;
-    while (end < length && contents[end] != '\n')
+    while (end < authorized_keys_length && authorized_keys[end] != '\n')
       end++;
     delivered++;
-    if (!callback(opaque, contents + start, end - start))
+    if (!callback(opaque, authorized_keys + start, end - start))
       break;
     start = end + 1;
   }
-  secure_zero(contents, length);
-  free(contents);
   AUTH_INFO("auth public keys delivered=%zu", delivered);
 }
 
@@ -471,6 +471,12 @@ __attribute__((constructor)) static void configure(void) {
       actual.sin_port != endpoint.sin_port)
     die(121);
   snprintf(props[0].value, sizeof(props[0].value), "acceptfd:%d", inherited_fd);
+  // adbd:s0 / shell cannot open Android's key directory on supported devices.
+  // Read and validate it while the launcher still has root's original context;
+  // keep only public keys, never an open privileged file or elevated auth thread.
+  if (getuid() != 0)
+    die(120);
+  load_authorized_keys(&authorized_keys, &authorized_keys_length);
   daemon_pid = getpid();
   parent_pid = getppid();
   configured = true;
