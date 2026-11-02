@@ -16,8 +16,8 @@ jobs:
         with:
           packages: "platform-tools platforms;android-37.0 build-tools;37.0.0 ndk;28.2.13676358"
           log-accepted-android-sdk-licenses: false
-      - run: ./gradlew :app:assembleRelease :app:lintRelease
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: TailAdb-release-unsigned
-          path: app/build/outputs/apk/release/app-release-unsigned.apk
+      - run: python3 tools/test-native.py
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Exercise the real policy in the disposable Linux runner
+        run: sudo -n bash tools/test-linux-integration.sh
+      - run: ./gradlew :app:testDebugUnitTest :app:assembleRelease :app:lintRelease
