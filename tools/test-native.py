@@ -18,6 +18,7 @@ def main():
             "network_recovery",
             "bounded_command",
             "session_wait",
+            "package_uids",
         ):
             for validation in (0, 1) if name == "daemon_profiles" else (0,):
                 output = Path(folder) / f"{name}-{validation}"

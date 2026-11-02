@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.os.SystemClock
 import kotlin.jvm.JvmStatic
-import kotlin.math.min
 
 object State {
     const val ACTION: String = "net.ryuya_dev.tailadb.STATE"
@@ -17,11 +16,19 @@ object State {
 
     @JvmStatic
     fun set(c: Context, value: String?, detail: String?) {
-        State.prefs(c)!!.edit()
+        val preferences = prefs(c)!!
+        val nextDetail = detail.orEmpty().take(1000)
+        if (
+            preferences.getString("state", null) == value &&
+                preferences.getString("detail", "") == nextDetail
+        )
+            return
+        preferences
+            .edit()
             .putString("state", value)
             .putString(
                 "detail",
-                if (detail == null) "" else detail.substring(0, min(1000, detail.length)),
+                nextDetail,
             )
             .apply()
         c.sendBroadcast(Intent(State.ACTION).setPackage(c.getPackageName()))
@@ -29,10 +36,11 @@ object State {
 
     @JvmStatic
     fun setPeer(c: Context, address: String?) {
-        State.prefs(c)!!.edit()
-            .putString("peer", if (address == null) "" else address)
-            .remove("peer_allowed")
-            .apply()
+        val preferences = prefs(c)!!
+        val nextPeer = address.orEmpty()
+        if (preferences.getString("peer", "") == nextPeer && !preferences.contains("peer_allowed"))
+            return
+        preferences.edit().putString("peer", nextPeer).remove("peer_allowed").apply()
         c.sendBroadcast(Intent(State.ACTION).setPackage(c.getPackageName()))
     }
 

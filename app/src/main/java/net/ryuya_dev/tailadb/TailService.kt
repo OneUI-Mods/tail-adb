@@ -145,6 +145,8 @@ class TailService : Service() {
                         TailService.quote(TailService.ROOT_DIRECTORY)
                 val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
                 TailService.await(context, process, 10)
+            } catch (error: InterruptedException) {
+                Thread.currentThread().interrupt()
             } catch (error: Throwable) {
                 if (!TailService.running)
                     State.set(context, "ERROR_ROOT", error.javaClass.getSimpleName())

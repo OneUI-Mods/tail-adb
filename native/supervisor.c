@@ -40,6 +40,8 @@
 #include "bounded_command.h"
 #include "network_recovery.h"
 #include "status_record.h"
+#include "package_uids.h"
+#include "network_events.h"
 
 #define TOKEN_BYTES 32
 #define MAX_REQUEST 4096
@@ -191,7 +193,7 @@ static void vpn_detail(const struct vpn_scan *scan, unsigned user_id, char *deta
 
 static enum vpn_result vpn_info(struct vpn *out, unsigned user_id, struct vpn_scan *scan) {
   int64_t deadline = tailadb_now_ms() + 5000;
-  char *args[] = {"/system/bin/dumpsys", "-t", "3", "connectivity", NULL};
+  char *args[] = {"/system/bin/dumpsys", "-t", "3", "connectivity", "networks", NULL};
   char *text = tailadb_capture(args, 2 * 1024 * 1024, 4000, &stopped);
   if (!text)
     return VPN_INSPECTION_ERROR;
@@ -199,6 +201,20 @@ static enum vpn_result vpn_info(struct vpn *out, unsigned user_id, struct vpn_sc
   if (!f) {
     free(text);
     return VPN_INSPECTION_ERROR;
+  }
+  // One authoritative package query covers all Android profiles. Keep the old
+  // per-user lookup as a compatibility fallback when enumeration is incomplete.
+  struct tailadb_package_uids package_uids = {0};
+  char *package_args[] = {"/system/bin/cmd", "package", "list", "packages", "-U", "--user",
+                          "all", "com.tailscale.ipn", NULL};
+  int64_t remaining = deadline - tailadb_now_ms();
+  char *packages = remaining > 0
+                       ? tailadb_capture(package_args, 65536,
+                                          remaining < 3000 ? (int)remaining : 3000, &stopped)
+                       : NULL;
+  if (packages) {
+    tailadb_parse_package_uids(packages, &package_uids);
+    free(packages);
   }
   char *line = NULL;
   size_t cap = 0;
@@ -223,7 +239,7 @@ static enum vpn_result vpn_info(struct vpn *out, unsigned user_id, struct vpn_sc
     if (sscanf(iface, "InterfaceName: %15s", v.iface) != 1 ||
         sscanf(handle, "handle{%llu}", &h) != 1 || sscanf(owner, "OwnerUid: %u", &v.uid) != 1)
       continue;
-    if (!package_uid(v.uid, deadline))
+    if (!tailadb_has_package_uid(&package_uids, v.uid) && !package_uid(v.uid, deadline))
       continue;
     // Only a Tailscale CGNAT /32 address in the LinkAddresses list is accepted.
     const char *p = ips + strlen("LinkAddresses: [ ");
@@ -1208,7 +1224,8 @@ int main(int argc, char **argv) {
       bool available = vpn_state == VPN_READY;
       if (stopped)
         break;
-      tailadb_network_checked(&recovery, tailadb_now_ms(), available);
+      bool unchanged = available && backend.child && same_vpn(&backend.vpn, &next);
+      tailadb_network_checked(&recovery, tailadb_now_ms(), available, unchanged);
       if (health >= 0 && (!available || !same_vpn(&health_vpn, &next))) {
         close(health);
         health = -1;
@@ -1399,10 +1416,25 @@ int main(int argc, char **argv) {
       break;
     }
     if (fds[0].revents & (POLLIN | POLLERR)) {
-      char buffer[16384];
-      for (int i = 0; i < 64 && recv(route, buffer, sizeof(buffer), MSG_DONTWAIT) > 0; i++) {
+      char buffer[16384] __attribute__((aligned(__alignof__(struct nlmsghdr))));
+      bool inspect = false;
+      for (int i = 0; i < 64; i++) {
+        ssize_t count = recv(route, buffer, sizeof(buffer), MSG_DONTWAIT | MSG_TRUNC);
+        if (count <= 0) {
+          if (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+            inspect = true;
+          break;
+        }
+        if ((size_t)count > sizeof(buffer)) {
+          inspect = true;
+          continue;
+        }
+        if (tailadb_relevant_network_event(buffer, (int)count,
+                                            backend.child ? backend.vpn.index : 0))
+          inspect = true;
       }
-      tailadb_network_event(&recovery, tailadb_now_ms());
+      if (inspect)
+        tailadb_network_event(&recovery, tailadb_now_ms());
     }
     if (fds[1].revents & POLLIN) {
       char changes[8192] __attribute__((aligned(__alignof__(struct inotify_event))));
@@ -1465,6 +1497,7 @@ int main(int argc, char **argv) {
           backend.peer = message.peer;
           memcpy(backend.token, message.token, sizeof(backend.token));
           backend.active = true;
+          tailadb_network_event(&recovery, tailadb_now_ms());
           char peer[INET_ADDRSTRLEN] = {0};
           inet_ntop(AF_INET, &backend.peer, peer, sizeof(peer));
           char detail[64];

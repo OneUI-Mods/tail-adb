@@ -51,8 +51,6 @@ import java.nio.charset.StandardCharsets
 import java.util.ArrayList
 import java.util.Comparator
 import java.util.TreeSet
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.function.ToIntFunction
 import kotlin.concurrent.Volatile
@@ -90,11 +88,12 @@ class MainActivity : AppCompatActivity() {
     private var settingsScroll: NestedScrollView? = null
     private var registered: Boolean = false
     private var renderingAccess: Boolean = false
-    private var statusRefresh: ScheduledExecutorService? = null
+    private var statusRefresh: StatusRefreshLoop? = null
     private val receiver: BroadcastReceiver =
         object : BroadcastReceiver() {
             override fun onReceive(c: Context?, i: Intent?) {
                 render()
+                statusRefresh?.changed()
             }
         }
 
@@ -779,15 +778,25 @@ class MainActivity : AppCompatActivity() {
         super.onStart()
         registerReceiver(receiver, IntentFilter(State.ACTION), Context.RECEIVER_NOT_EXPORTED)
         registered = true
-        statusRefresh = Executors.newSingleThreadScheduledExecutor()
-        statusRefresh!!.scheduleWithFixedDelay(
-            Runnable {
-                if (MainActivity.rootAvailable) TailService.refreshState(getApplicationContext())
-            },
-            1,
-            3,
-            TimeUnit.SECONDS,
-        )
+        statusRefresh =
+            StatusRefreshLoop(
+                snapshot = {
+                    val state = State.prefs(this)!!
+                    listOf(
+                        state.getString("state", null),
+                        state.getString("detail", null),
+                        state.getString("peer", null),
+                    )
+                },
+                refresh = {
+                    if (MainActivity.rootAvailable)
+                        TailService.refreshState(getApplicationContext())
+                    runOnUiThread {
+                        if (statusRefresh != null && !isFinishing) render()
+                    }
+                },
+            )
+        statusRefresh!!.changed()
         render()
     }
 
@@ -797,7 +806,7 @@ class MainActivity : AppCompatActivity() {
             registered = false
         }
         if (statusRefresh != null) {
-            statusRefresh!!.shutdownNow()
+            statusRefresh!!.close()
             statusRefresh = null
         }
         super.onStop()

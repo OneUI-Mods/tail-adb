@@ -15,6 +15,8 @@ struct tailadb_recovery {
   unsigned waiting_attempts;
   unsigned bind_attempts;
   unsigned child_failures;
+  unsigned stable_checks;
+  bool network_dirty;
 };
 
 static inline int tailadb_retry_delay(unsigned attempt) {
@@ -31,6 +33,8 @@ static inline bool tailadb_transient_bind_error(int error) {
 }
 
 static inline void tailadb_network_event(struct tailadb_recovery *state, int64_t now) {
+  state->network_dirty = true;
+  state->stable_checks = state->waiting_attempts = 0;
   int64_t due = now + 250;
   if (due < state->last_inspected + 1000)
     due = state->last_inspected + 1000;
@@ -39,14 +43,24 @@ static inline void tailadb_network_event(struct tailadb_recovery *state, int64_t
 }
 
 static inline void tailadb_network_checked(struct tailadb_recovery *state, int64_t now,
-                                           bool available) {
+                                           bool available, bool unchanged) {
   state->last_inspected = now;
   unsigned attempt = state->waiting_attempts;
-  if (available)
+  if (available) {
     state->waiting_attempts = 0;
-  else if (state->waiting_attempts < 4)
-    state->waiting_attempts++;
-  state->inspect_at = now + (available ? 15000 : tailadb_retry_delay(attempt));
+    if (!unchanged || state->network_dirty)
+      state->stable_checks = 0;
+    else if (state->stable_checks < 2)
+      state->stable_checks++;
+    state->inspect_at = now + (15000 << state->stable_checks);
+  } else {
+    state->stable_checks = 0;
+    if (state->waiting_attempts < 6)
+      state->waiting_attempts++;
+    int delay = attempt < 4 ? 1000 << attempt : attempt == 4 ? 15000 : attempt == 5 ? 30000 : 60000;
+    state->inspect_at = now + delay;
+  }
+  state->network_dirty = false;
 }
 
 static inline void tailadb_bind_retry(struct tailadb_recovery *state, int64_t now) {

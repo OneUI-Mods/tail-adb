@@ -28,6 +28,44 @@ static void health(int listener, struct sockaddr_in *address, struct backend *ba
 }
 
 int main(void) {
+  struct {
+    struct nlmsghdr header;
+    struct rtmsg route;
+    struct rtattr attribute;
+    unsigned index;
+  } change = {.header = {.nlmsg_type = RTM_NEWROUTE},
+               .route = {.rtm_family = AF_INET},
+               .attribute = {.rta_type = RTA_OIF, .rta_len = RTA_LENGTH(sizeof(unsigned))},
+               .index = 7};
+  change.header.nlmsg_len = sizeof(change);
+  assert(!tailadb_relevant_network_event(&change, sizeof(change), 9));
+  assert(tailadb_relevant_network_event(&change, sizeof(change), 7));
+  assert(tailadb_relevant_network_event(&change, sizeof(change), 0));
+  assert(tailadb_relevant_network_event(&change, sizeof(change) - 1, 9));
+  change.header.nlmsg_type = NLMSG_OVERRUN;
+  assert(tailadb_relevant_network_event(&change, sizeof(change), 9));
+  struct {
+    struct nlmsghdr header;
+    struct ifinfomsg link;
+  } link = {.header = {.nlmsg_type = RTM_DELLINK}, .link = {.ifi_index = 8}};
+  link.header.nlmsg_len = sizeof(link);
+  assert(!tailadb_relevant_network_event(&link, sizeof(link), 9));
+  assert(tailadb_relevant_network_event(&link, sizeof(link), 8));
+  link.link.ifi_flags = IFF_POINTOPOINT;
+  assert(tailadb_relevant_network_event(&link, sizeof(link), 9));
+  struct {
+    struct nlmsghdr header;
+    struct ifaddrmsg address;
+    struct rtattr attribute;
+    uint32_t ip;
+  } added = {.header = {.nlmsg_type = RTM_NEWADDR},
+              .address = {.ifa_family = AF_INET, .ifa_prefixlen = 32, .ifa_index = 11},
+              .attribute = {.rta_type = IFA_LOCAL, .rta_len = RTA_LENGTH(sizeof(uint32_t))}};
+  added.header.nlmsg_len = sizeof(added);
+  added.ip = inet_addr("192.168.1.4");
+  assert(!tailadb_relevant_network_event(&added, sizeof(added), 9));
+  added.ip = inet_addr("100.100.1.4");
+  assert(tailadb_relevant_network_event(&added, sizeof(added), 9));
   struct sockaddr_in address;
   int listener = loopback(&address);
   struct backend backend = {.child = 42, .listener = -1, .control = -1};

@@ -6,7 +6,7 @@
 int main(void) {
   struct tailadb_recovery state = {0};
   assert(!tailadb_poll_timeout(&state, 100));
-  tailadb_network_checked(&state, 100, true);
+  tailadb_network_checked(&state, 100, true, false);
   assert(state.inspect_at == 15100);
   // Unrelated socket traffic must not move the absolute inspection deadline.
   for (int i = 101; i < 15100; i += 37)
@@ -20,16 +20,26 @@ int main(void) {
   assert(state.inspect_at == 1100); // A link event storm cannot postpone the check.
 
   int64_t now = 1100;
-  const int waits[] = {1000, 2000, 4000, 8000, 15000, 15000};
+  const int waits[] = {1000, 2000, 4000, 8000, 15000, 30000, 60000, 60000};
   for (size_t i = 0; i < sizeof(waits) / sizeof(waits[0]); i++) {
-    tailadb_network_checked(&state, now, false);
+    tailadb_network_checked(&state, now, false, false);
     assert(state.inspect_at == now + waits[i]);
     now = state.inspect_at;
   }
   tailadb_network_event(&state, now - 500);
   assert(state.inspect_at < now); // A restored VPN wakes the otherwise slow waiting loop.
-  tailadb_network_checked(&state, now, true);
+  tailadb_network_checked(&state, now, true, false);
   assert(state.waiting_attempts == 0);
+  assert(state.inspect_at == now + 15000);
+  tailadb_network_checked(&state, now + 15000, true, true);
+  assert(state.inspect_at == now + 45000);
+  tailadb_network_checked(&state, now + 45000, true, true);
+  assert(state.inspect_at == now + 105000);
+  tailadb_network_event(&state, now + 46000);
+  assert(state.inspect_at == now + 46250);
+  tailadb_network_checked(&state, now + 46250, true, true);
+  assert(state.inspect_at == now + 61250); // A real event returns to the fast cadence.
+  now += 62000;
 
   tailadb_bind_retry(&state, now);
   tailadb_network_event(&state, now);
