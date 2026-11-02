@@ -24,3 +24,11 @@ supervisorは起動前から鍵ディレクトリを監視し、鍵ファイル�
 実機試験はAndroid 17の対応済みGalaxyに限る。Android 16はABIとホスト試験での維持を確認し、今回のSamsung Android 16実機試験は行わない。未登録鍵、異なるroot実装、未知のadbd、回線切替、長時間接続まで確認済みとは扱わない。
 
 認証callbackの契約は[AOSPのadbd_auth.h](https://android.googlesource.com/platform/frameworks/native/+/94ae13178781a14867071636fded56c907a9db8b/libs/adbd_auth/include/adbd_auth.h)、[daemon/auth.cpp](https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/daemon/auth.cpp)を参照する。
+
+## Android 17実機結果（2026-11-02）
+
+署名済み0.2.7を上書きし、専用待受だけを再開した。新しいADBサーバー2つの初回接続、A→B、B→Aの全3回で認証失敗表示がなくなった。実機ログでも登録済み鍵による署名承認を確認し、後段の送信元許可へのフォールバックと鍵の読み取りエラーは発生しなかった。ログの初期化も権限変更後に行い、認証中の診断出力を維持する。
+
+shell UID2000、許可済みroot UID0、262,144バイトのpush/pullとSHA-256一致、選択ユーザーのTailscale所有者を確認。待機中も既存接続のecho/rootが継続した。同じMacの2サーバーであり、今回版の別OS・別IP試験とは区別する。
+
+保存設定、boot ID、system_server/SystemUI PID、SELinux状態を維持した。GUI・音声・OS再起動は使わず、専用サーバー・一時ファイル・共有leaseを返却した。実機のAPKハッシュと配布APKを照合した。
