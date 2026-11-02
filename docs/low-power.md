@@ -28,4 +28,21 @@ nativeの試験は安定時の上限、変化時の復帰、イベントの連�
 
 Android 16/17の既存分岐を維持する。今回のSamsung Android16実機、GUI、回線の実切り替え、長時間放電による電池持ちの改善量は未検証。
 
+## Android 17の実機比較（2026-11-02）
+
+同じ端末で待受中の各60秒を比較した。0.2.8側は確認間隔の安定後に測定し、対象supervisorのCPUと、終了して回収された検査用子プロセスのCPUを合計した。
+
+| 指標 | 0.2.7 | 0.2.8 |
+| --- | ---: | ---: |
+| 測定時間 | 60.15秒 | 60.19秒 |
+| supervisor + 検査子のCPU tick | 24 | 5 |
+| supervisor自身の精密CPU runtime | 52.06ms | 11.35ms |
+| supervisorのvoluntary context switch | 165 | 20 |
+
+対象CPU tickは約79%減った。context switchを端末のスリープ解除回数や電力に読み替えない。短時間の観察であり、端末全体・Tailscale本体・Wi-Fi/モバイル無線・PC側の維持通信の消費を直接測った結果ではない。長時間の放電によるmAhや電池持ちは未測定。
+
+現在のネットワークだけの出力は約120KBで、全体ダンプ約313KBから約62%減った。network handle・所有UID・インターフェースの候補は同じだった。現在接続中の2つのAndroidユーザーはREADY、パッケージがあってもVPNがない別ユーザーはOTHER_USERとなり、設定したユーザーを切り替えずに所有者照合を確認した。
+
+新規サーバー2つによる初回接続、A→B→Aの待機・引き継ぎ、shell/root、256KiBのpush/pullとSHA一致に成功。保存設定、boot ID、system_server/SystemUI、SELinux状態を維持し、GUI・音声・OS再起動は使わず、専用待受だけを再開した。画面の取得間隔とキャンセルはJVM試験で確認し、実機GUIでの表示比較は行っていない。
+
 接続情報だけをdumpする引数は[AOSP ConnectivityService](https://android.googlesource.com/platform/packages/modules/Connectivity/+/refs/heads/main/service/src/com/android/server/ConnectivityService.java)の`NETWORK_ARG`と`dumpNetworks`を参照。

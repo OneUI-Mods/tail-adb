@@ -384,9 +384,10 @@ class MainActivity : AppCompatActivity() {
                                 rootState!!.setText(
                                     if (result) R.string.root_allowed else R.string.state_root
                                 )
-                                if (result) TailService.refreshState(getApplicationContext())
+                                if (result) statusRefresh?.changed()
                                 if (!result && !TailService.running)
                                     State.set(this, "ERROR_ROOT", "")
+                                render()
                             }
                         }
                     )
