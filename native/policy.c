@@ -86,6 +86,7 @@ static enum tailadb_auth_abi auth_abi;
 // The supervisor restarts this backend when Android's authorized-key file changes.
 static char *authorized_keys;
 static size_t authorized_keys_length;
+static const char *authorized_keys_failure = "not initialized";
 
 static bool own_process(void) {
   return configured && getpid() == daemon_pid;
@@ -212,21 +213,21 @@ static bool validate_key_line(const char *line, size_t length) {
 static bool load_authorized_keys(char **contents, size_t *length) {
   *contents = NULL;
   *length = 0;
+  // Do not initialize liblog's socket as root before adbd changes its UID and
+  // SELinux context. Report any startup failure from the later auth callback.
+  authorized_keys_failure = "directory open failed";
   int directory = open("/data/misc/adb", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-  if (directory < 0) {
-    AUTH_WARN("authorized keys: directory open failed errno=%d", errno);
+  if (directory < 0)
     return false;
-  }
   struct stat directory_stat;
   bool trusted = !fstat(directory, &directory_stat) && S_ISDIR(directory_stat.st_mode) &&
                  directory_stat.st_uid == 1000 && directory_stat.st_gid == 2000 &&
                  !(directory_stat.st_mode & 0027);
   int fd = trusted ? openat(directory, "adb_keys", O_RDONLY | O_CLOEXEC | O_NOFOLLOW) : -1;
   close(directory);
-  if (fd < 0) {
-    AUTH_WARN("authorized keys: trust/open failed errno=%d", errno);
+  authorized_keys_failure = "trust/open failed";
+  if (fd < 0)
     return false;
-  }
   struct stat before, after;
   trusted = !fstat(fd, &before) && S_ISREG(before.st_mode) && before.st_uid == 1000 &&
             before.st_gid == 2000 && !(before.st_mode & 0022) && before.st_size > 0 &&
@@ -249,7 +250,7 @@ static bool load_authorized_keys(char **contents, size_t *length) {
             before.st_size == after.st_size && before.st_mtime == after.st_mtime;
   close(fd);
   if (!trusted) {
-    AUTH_WARN("authorized keys: stable read or metadata validation failed");
+    authorized_keys_failure = "stable read or metadata validation failed";
     free(data);
     return false;
   }
@@ -260,7 +261,7 @@ static bool load_authorized_keys(char **contents, size_t *length) {
     while (end < used && data[end] != '\n')
       end++;
     if (!validate_key_line(data + start, end - start) || ++keys > 128) {
-      AUTH_WARN("authorized keys: invalid line index=%zu length=%zu", keys + 1, end - start);
+      authorized_keys_failure = "invalid key line";
       secure_zero(data, used);
       free(data);
       return false;
@@ -269,7 +270,7 @@ static bool load_authorized_keys(char **contents, size_t *length) {
   }
   *contents = data;
   *length = used;
-  AUTH_INFO("authorized keys: loaded count=%zu bytes=%zu", keys, used);
+  authorized_keys_failure = NULL;
   return true;
 }
 
@@ -302,8 +303,10 @@ void adbd_auth_get_public_keys(void *context,
   if (!own_process() || context != &auth_context || !callback)
     die(123);
   AUTH_INFO("auth get public keys");
-  if (!authorized_keys)
+  if (!authorized_keys) {
+    AUTH_WARN("authorized keys: %s", authorized_keys_failure);
     return;
+  }
   size_t start = 0;
   size_t delivered = 0;
   while (start < authorized_keys_length) {
