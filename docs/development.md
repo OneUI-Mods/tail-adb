@@ -80,3 +80,7 @@ root境界はKernelSU `samsung-v1.0:KernelSU` version code 32664で検証して�
 - [Android 17の互換性](compatibility/android17.md)
 
 - [Kotlin移行の設計と検証範囲](kotlin-migration.md)
+
+## CPU・メモリ効率
+
+[変更内容と検証範囲](efficiency.md)を参照してください。

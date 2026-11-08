@@ -1,8 +1,8 @@
 package net.ryuya_dev.tailadb
 
-import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 internal class StatusRefreshCadence(private val baseMs: Long, private val maxMs: Long) {
@@ -22,7 +22,8 @@ internal class StatusRefreshCadence(private val baseMs: Long, private val maxMs:
 internal class StatusRefreshLoop(
     private val snapshot: () -> Any?,
     private val refresh: () -> Unit,
-    private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor(),
+    private val executor: ScheduledExecutorService =
+        ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true },
     private val quickDelayMs: Long = 1000,
     private val baseDelayMs: Long = 3000,
     private val maxDelayMs: Long = 15000,
