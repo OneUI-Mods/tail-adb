@@ -1,5 +1,7 @@
 # Tail ADB
 
+[日本語](README.md) · [English](README.en.md)
+
 Tail ADBは、root化したAndroid端末にTailscale経由だけで接続できる、独立したADB待受を作るアプリです。Wi-Fiとモバイルデータのどちらでも利用でき、Android設定の「ワイヤレスデバッグ」をオフにしても動作します。
 
 待受は検証済みのTailscale VPNインターフェースと端末のTailscale IPv4へ固定します。LAN側には公開せず、Android標準や他アプリのADB待受も変更しません。
