@@ -103,6 +103,34 @@ Android 17実機で、アプリから起動したbrokerがアプリのデータ�
 
 修正版の署名済み通常releaseを実機へ更新し、rootで他アプリのデータディレクトリを参照できること、専用mount namespaceであることを確認しました。端末の再起動は不要です。
 
+## Mainline ADB 373041180（2026-11-15）
+
+同じBZI9のOSでも、Mainline ADBが更新されるとADB本体のハッシュが変わります。
+0.2.10では、次の完全一致ペアを独立したプロファイルとして追加しました。
+旧Android 16・17の確認済みプロファイルや、未検証factory 17の制限は変更しません。
+
+| ファイル | SHA-256 |
+| --- | --- |
+| `adbd` | `37498581d2dc6f249120a4a9b01087a87013d7cdc63d05ac3d6ce198470dfefb` |
+| `libadbd_auth.so` | `46bff7ced0447286293b5597b43a660db0ae3a954dd9a5db9725bf6bb6cb6a6e` |
+
+実機から回収したELFの認証APIは、既存の13関数に加えてweak importの
+`adbd_auth_send_message`を持ちます。後者の呼び出しにはAPI 38以上の条件分岐があり、
+検証したAPI 37では使いません。既存policyのV1認証処理を維持しています。
+このプロファイルは実行時にもAPI 37だけを許可し、新しいOSで未確認の経路へ進みません。
+
+通常版へ追加する前に検証用nativeで次を実機確認しました。
+
+- shellはUID 2000と`u:r:shell:s0`、SELinuxはEnforcing。
+- root未許可では同梱suを拒否し、絶対パスのsuでもrootに昇格できない。
+- 保存済みroot許可を与えた接続元だけがUID 0・`u:r:ksu:s0`を使える。
+- Tailscaleのみに待受し、LANの同ポートでは接続できない。
+- ADB syncの送受信がバイト単位で一致する。
+- 保存済み設定、boot ID、system_serverとSystemUIのPIDは変わらない。
+
+画面操作・OS/SystemUIの再起動は行っていません。通信不能時の互換性エラーは
+取り除かず、未対応のADBと認証ライブラリの組み合わせを示す文面へ修正しました。
+
 ## 残る確認
 
 - ROM内のfactory 17本体（`d4d314…`）での認証・隔離・lifecycle・mDNS動作。現実機はこの本体で動作していないため未検証で、通常版の許可対象にはしません。

@@ -22,7 +22,7 @@
   <string name="instructions">Connect Tailscale on this phone first, then start ADB. Run the command below from your computer. A new host remains unauthorized until you allow shell access here.</string>
   <string name="scope">This app’s listener is bound to the verified Tailscale VPN interface and address. It does not change Android’s wireless debugging setting or existing ADB listeners.</string>
   <string name="root_hint">Root is required to start the isolated ADB process. Access is requested automatically when the app opens.</string>
-  <string name="compatibility">This build supports the verified Android 16 adbd binary on SM-S948Q and KernelSU with no-new-privileges support. It stops if either security boundary is unavailable.</string>
+  <string name="compatibility">Requires a verified Android 16 or 17 ADB daemon/authentication library pair on SM-S948Q and KernelSU with no-new-privileges support. Unsupported combinations cannot start.</string>
   <string name="isolation">ADB shell network operations run in an isolated network namespace. Normal apps retain their own network access. Standard Android wireless debugging can be turned off independently.</string>
   <string name="licenses">Licenses</string>
   <string name="language">App language</string>
@@ -66,7 +66,7 @@
   <string name="state_network_inspection">Could not finish checking the Tailscale VPN</string>
   <string name="state_retrying">Restarting ADB</string>
   <string name="state_root">Root permission is required</string>
-  <string name="state_compat">This OS version has not been verified</string>
+  <string name="state_compat">This ADB daemon and authentication library combination is unsupported</string>
   <string name="state_isolation">Could not establish secure isolation</string>
   <string name="state_bind">Could not open the Tailscale port</string>
   <string name="state_crashes">Stopped after repeated ADB failures</string>

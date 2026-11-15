@@ -4,6 +4,9 @@
 #define _GNU_SOURCE
 #include <android/log.h>
 #include <android/multinetwork.h>
+#if defined(__ANDROID__)
+#include <android/api-level.h>
+#endif
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <errno.h>
@@ -323,7 +326,15 @@ static const struct tailadb_daemon_profile *supported_daemon(void) {
               !strcmp(path, "/apex/com.android.adbd/bin/adbd") &&
               fscanf(f, "%64s %1023s", auth, path) == 2 &&
               !strcmp(path, "/system/lib64/libadbd_auth.so");
-  return pclose(f) == 0 && good ? tailadb_daemon_profile(adbd, auth) : NULL;
+  const struct tailadb_daemon_profile *profile =
+      pclose(f) == 0 && good ? tailadb_daemon_profile(adbd, auth) : NULL;
+#if defined(__ANDROID__)
+  // This daemon also imports an optional API-38 auth function. The reviewed
+  // API-37 path never calls it; do not assume that remains true on a newer OS.
+  if (profile == &tailadb_android17_mainline_373041180 && android_get_device_api_level() != 37)
+    return NULL;
+#endif
+  return profile;
 }
 
 static int copy_daemon(const char *destination) {

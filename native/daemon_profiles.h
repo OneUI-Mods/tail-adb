@@ -17,6 +17,7 @@ struct tailadb_daemon_profile {
 #include "profiles/android16.h"
 #include "profiles/android17.h"
 #include "profiles/android17_legacy_adbd.h"
+#include "profiles/android17_mainline_373041180.h"
 
 #ifndef TAILADB_ANDROID17_VALIDATION
 #define TAILADB_ANDROID17_VALIDATION 0
@@ -27,11 +28,14 @@ static inline const struct tailadb_daemon_profile *tailadb_daemon_profile(const 
   if (!adbd || !auth)
     return NULL;
   const struct tailadb_daemon_profile *profiles[] = {&tailadb_android16, &tailadb_android17,
-                                                     &tailadb_android17_legacy_adbd};
+                                                     &tailadb_android17_legacy_adbd,
+                                                     &tailadb_android17_mainline_373041180};
   for (size_t i = 0; i < sizeof(profiles) / sizeof(profiles[0]); i++) {
     const struct tailadb_daemon_profile *profile = profiles[i];
     bool permitted =
-        profile->verified || (TAILADB_ANDROID17_VALIDATION && profile == &tailadb_android17);
+        profile->verified ||
+        (TAILADB_ANDROID17_VALIDATION &&
+         (profile == &tailadb_android17 || profile == &tailadb_android17_mainline_373041180));
     if (permitted && !strcmp(adbd, profile->adbd_sha256) && !strcmp(auth, profile->auth_sha256))
       return profile;
   }

@@ -24,6 +24,14 @@ int main(void) {
   assert(retained == &tailadb_android17_legacy_adbd);
   assert(!strcmp(retained->policy_abi, "android16"));
   assert(!tailadb_daemon_supported(tailadb_android17.adbd_sha256, auth));
+  const struct tailadb_daemon_profile *mainline = &tailadb_android17_mainline_373041180;
+  assert(tailadb_daemon_supported(mainline->adbd_sha256, mainline->auth_sha256) ==
+         (mainline->verified || (bool)TAILADB_ANDROID17_VALIDATION));
+  assert(!tailadb_daemon_supported(mainline->adbd_sha256, auth));
+  assert(!tailadb_daemon_supported(mainline->auth_sha256, mainline->adbd_sha256));
+  if (mainline->verified || TAILADB_ANDROID17_VALIDATION)
+    assert(!strcmp(tailadb_daemon_profile(mainline->adbd_sha256, mainline->auth_sha256)->policy_abi,
+                   "android17"));
   if (TAILADB_ANDROID17_VALIDATION) {
     const struct tailadb_daemon_profile *candidate =
         tailadb_daemon_profile(tailadb_android17.adbd_sha256, tailadb_android17.auth_sha256);
