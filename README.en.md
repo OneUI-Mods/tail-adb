@@ -6,6 +6,10 @@ Tail ADB creates an independent ADB listener on a rooted Android device, reachab
 
 The listener binds to a verified Tailscale VPN interface and the device's Tailscale IPv4 address. It is not exposed on the LAN and does not change Android's stock listener or another app's ADB listener.
 
+## Automatic startup after boot
+
+Automatic startup after device boot can be switched on or off in settings. The default is on when no choice has been saved; an existing off choice is preserved. Startup only restores configured behavior and does not override feature switches, permissions, or lock-state restrictions.
+
 ## Features
 
 - Start and stop a Tailscale-only ADB listener.

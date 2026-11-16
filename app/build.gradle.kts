@@ -16,7 +16,7 @@ val distribution =
         providers.environmentVariable("TAILADB_SIGNING_PROPERTIES").orNull?.let { path ->
             file(path).inputStream().use { load(it) }
             for (key in listOf("storeFile", "storePassword", "keyAlias", "keyPassword")) check(
-                !getProperty(key).isNullOrBlank()
+                !getProperty(key).isNullOrBlank(),
             ) {
                 "Missing release signing property: $key"
             }
@@ -32,8 +32,8 @@ android {
         applicationId = "net.ryuya_dev.tailadb"
         minSdk = 36
         targetSdk = 37
-        versionCode = 12
-        versionName = "0.2.10"
+        versionCode = 13
+        versionName = "0.2.11"
         if (android17Validation.get() == "true") versionNameSuffix = "-android17-validation"
     }
     signingConfigs {
@@ -138,7 +138,7 @@ val generateLicenses =
             val text = buildString {
                 append(rootProject.file("LICENSE").readText())
                 append(
-                    "\n\nThird-party runtime dependencies, including transitive dependencies\n\n"
+                    "\n\nThird-party runtime dependencies, including transitive dependencies\n\n",
                 )
                 for (row in rows) append(row.joinToString("\n") + "\n\n")
                 for (name in rows.map { it[2] }.distinct()) {

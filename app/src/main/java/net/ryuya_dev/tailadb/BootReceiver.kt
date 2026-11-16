@@ -42,7 +42,7 @@ class BootReceiver : BroadcastReceiver() {
             return context
                 .createDeviceProtectedStorageContext()
                 .getSharedPreferences(BootReceiver.PREFERENCES, Context.MODE_PRIVATE)
-                .getBoolean(BootReceiver.ENABLED, false)
+                .getBoolean(BootReceiver.ENABLED, true)
         }
 
         @JvmStatic
