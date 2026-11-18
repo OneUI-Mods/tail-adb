@@ -113,3 +113,5 @@ python3 tailadb_watch.py --device 100.64.0.10:5555
 ## 文字列の互換性
 
 接続情報、接続元一覧、保存済みの候補を表示するとき、一部の空白文字や空の文字列を従来どおりに扱うよう修正しました。
+
+[Build environment / ビルド環境](docs/build-environment.md)

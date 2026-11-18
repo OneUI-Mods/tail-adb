@@ -25,9 +25,11 @@ val distribution =
 
 android {
     namespace = "net.ryuya_dev.tailadb"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     buildToolsVersion = "37.0.0"
-    ndkVersion = "28.2.13676358"
+    ndkVersion = "30.0.16248370"
     defaultConfig {
         applicationId = "net.ryuya_dev.tailadb"
         minSdk = 36
@@ -82,7 +84,7 @@ val compileNative =
             commandLine(
                 "bash",
                 "tools/build-native.sh",
-                nativeSdk.get().asFile.resolve("ndk/28.2.13676358").absolutePath,
+                nativeSdk.get().asFile.resolve("ndk/30.0.16248370").absolutePath,
                 nativeOutput.get().asFile.absolutePath,
                 nativeCompatibilityMode,
             )

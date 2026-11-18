@@ -2,7 +2,7 @@
 
 ## ビルド
 
-JDK 21、Android SDK 37、NDK 28.2.13676358を用意し、Android Studioで開きます。作業フォルダは `~/Documents/TailAdb`、パッケージは `net.ryuya_dev.tailadb` です。
+JDK 27、Android SDK 37、NDK 30.0.16248370を用意し、Android Studioで開きます。作業フォルダは `~/Documents/TailAdb`、パッケージは `net.ryuya_dev.tailadb` です。
 
 ```sh
 ./gradlew :app:assembleRelease :app:lintRelease
@@ -84,3 +84,5 @@ root境界はKernelSU `samsung-v1.0:KernelSU` version code 32664で検証して�
 ## CPU・メモリ効率
 
 [変更内容と検証範囲](efficiency.md)を参照してください。
+
+[Build environment / ビルド環境](build-environment.md)

@@ -60,7 +60,7 @@ class TailService : Service() {
                     sendBroadcast(Intent(State.ACTION).setPackage(getPackageName()))
                     stopSelf(startId)
                 }
-            }
+            },
         )
         return Service.START_NOT_STICKY
     }
@@ -166,7 +166,7 @@ class TailService : Service() {
                         val thread = Thread(task, "TailAdbOutput")
                         thread.setDaemon(true)
                         thread
-                    }
+                    },
                 )
             val parsed = reader.submit<Boolean?>(Callable { TailService.parse(context, process) })
             try {
@@ -174,7 +174,7 @@ class TailService : Service() {
                 // hung.
                 if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS))
                     throw IOException("Root command timeout")
-                val nativeError = parsed.get(2, TimeUnit.SECONDS)
+                val nativeError = parsed.get(2, TimeUnit.SECONDS) == true
                 if (process.exitValue() != 0 && !nativeError)
                     throw IOException("Root command failed")
             } finally {

@@ -138,13 +138,13 @@ class MainActivity : AppCompatActivity() {
         nav.setOnItemSelectedListener(
             OnItemSelectedListener { item: MenuItem? ->
                 connectScroll!!.setVisibility(
-                    if (item!!.getItemId() == 1) View.VISIBLE else View.GONE
+                    if (item!!.getItemId() == 1) View.VISIBLE else View.GONE,
                 )
                 settingsScroll!!.setVisibility(
-                    if (item!!.getItemId() == 2) View.VISIBLE else View.GONE
+                    if (item!!.getItemId() == 2) View.VISIBLE else View.GONE,
                 )
                 true
-            }
+            },
         )
         render()
         if (!MainActivity.requestedRoot && !TailService.running) {
@@ -208,7 +208,7 @@ class MainActivity : AppCompatActivity() {
                     val value: String? = detail!!.split("\t".toRegex()).toTypedArray()[0]
                     if (!TextCompatibility.isBlank(value!!)) {
                         getSystemService<ClipboardManager?>(ClipboardManager::class.java)
-                            .setPrimaryClip(ClipData.newPlainText("ADB", "adb connect " + value))
+                            ?.setPrimaryClip(ClipData.newPlainText("ADB", "adb connect " + value))
                         Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
                     }
                 },
@@ -224,11 +224,11 @@ class MainActivity : AppCompatActivity() {
                             .toTypedArray()[0]
                     if (endpoint!!.matches("100\\.[0-9.]+:[0-9]{4,5}".toRegex())) {
                         getSystemService<ClipboardManager?>(ClipboardManager::class.java)
-                            .setPrimaryClip(
+                            ?.setPrimaryClip(
                                 ClipData.newPlainText(
                                     "Tail ADB",
                                     "python3 tailadb_watch.py --device " + endpoint,
-                                )
+                                ),
                             )
                         Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
                     }
@@ -245,7 +245,7 @@ class MainActivity : AppCompatActivity() {
         shellToggle!!.setOnCheckedChangeListener(
             OnCheckedChangeListener { button: CompoundButton?, checked: Boolean ->
                 if (!renderingAccess) setCurrentPeerAccess("shell_hosts", checked)
-            }
+            },
         )
         access.addView(shellToggle, LayoutParams(-1, dp(56)))
         rootToggle = MaterialSwitch(this)
@@ -253,7 +253,7 @@ class MainActivity : AppCompatActivity() {
         rootToggle!!.setOnCheckedChangeListener(
             OnCheckedChangeListener { button: CompoundButton?, checked: Boolean ->
                 if (!renderingAccess) setCurrentPeerAccess("allowed_hosts", checked)
-            }
+            },
         )
         access.addView(rootToggle, LayoutParams(-1, dp(56)))
         portLayout = TextInputLayout(this)
@@ -262,7 +262,7 @@ class MainActivity : AppCompatActivity() {
         port = TextInputEditText(portLayout!!.getContext())
         port!!.setInputType(InputType.TYPE_CLASS_NUMBER)
         port!!.setText(
-            getSharedPreferences("settings", Context.MODE_PRIVATE).getInt("port", 5555).toString()
+            getSharedPreferences("settings", Context.MODE_PRIVATE).getInt("port", 5555).toString(),
         )
         portLayout!!.addView(port)
         connection!!.addView(portLayout, LayoutParams(-1, -2))
@@ -319,7 +319,7 @@ class MainActivity : AppCompatActivity() {
         autoStart.setOnCheckedChangeListener(
             OnCheckedChangeListener { button: CompoundButton?, checked: Boolean ->
                 BootReceiver.setEnabled(this, checked)
-            }
+            },
         )
         startup.addView(autoStart, LayoutParams(-1, dp(56)))
         startup.addView(text(getString(R.string.auto_start_explanation), 14))
@@ -342,7 +342,7 @@ class MainActivity : AppCompatActivity() {
                                 d: DialogInterface?,
                                 n: Int ->
                                 getSystemService<LocaleManager?>(LocaleManager::class.java)
-                                    .setApplicationLocales(LocaleList.forLanguageTags(tags[n]))
+                                    ?.setApplicationLocales(LocaleList.forLanguageTags(tags[n]))
                             },
                         )
                         .show()
@@ -382,14 +382,14 @@ class MainActivity : AppCompatActivity() {
                         Runnable {
                             if (!isDestroyed()) {
                                 rootState!!.setText(
-                                    if (result) R.string.root_allowed else R.string.state_root
+                                    if (result) R.string.root_allowed else R.string.state_root,
                                 )
                                 if (result) statusRefresh?.changed()
                                 if (!result && !TailService.running)
                                     State.set(this, "ERROR_ROOT", "")
                                 render()
                             }
-                        }
+                        },
                     )
                 },
                 "TailAdbRootCheck",
@@ -450,7 +450,7 @@ class MainActivity : AppCompatActivity() {
             shellAccess.setOnCheckedChangeListener(
                 OnCheckedChangeListener { button: CompoundButton?, checked: Boolean ->
                     setHostAccess(host, "shell_hosts", checked)
-                }
+                },
             )
             content.addView(shellAccess, LayoutParams(-1, dp(52)))
             val rootAccess = MaterialSwitch(this)
@@ -459,7 +459,7 @@ class MainActivity : AppCompatActivity() {
             rootAccess.setOnCheckedChangeListener(
                 OnCheckedChangeListener { button: CompoundButton?, checked: Boolean ->
                     setHostAccess(host, "allowed_hosts", checked)
-                }
+                },
             )
             content.addView(rootAccess, LayoutParams(-1, dp(52)))
             row.addView(content)
@@ -490,14 +490,16 @@ class MainActivity : AppCompatActivity() {
     private fun availableProfiles(): MutableList<UserHandle?> {
         val profiles =
             ArrayList<UserHandle?>(
-                getSystemService<UserManager?>(UserManager::class.java).getUserProfiles()
+                getSystemService<UserManager?>(UserManager::class.java)
+                    ?.getUserProfiles()
+                    .orEmpty(),
             )
         profiles.sortWith(
             Comparator.comparingInt<UserHandle?>(
                 ToIntFunction { profile: UserHandle? ->
                     if (profile.hashCode() == currentUserId()) Int.MIN_VALUE else profile.hashCode()
-                }
-            )
+                },
+            ),
         )
         return profiles
     }
@@ -530,7 +532,7 @@ class MainActivity : AppCompatActivity() {
                     !values[0].matches("[0-9]{1,5}".toRegex()) ||
                     !values[1].matches(
                         "100\\.(6[4-9]|[78][0-9]|9[0-9]|1[01][0-9]|12[0-7])\\.[0-9]{1,3}\\.[0-9]{1,3}"
-                            .toRegex()
+                            .toRegex(),
                     ) ||
                     !values[2].matches("[A-Za-z0-9_.-]{1,15}".toRegex())
             )
@@ -566,11 +568,11 @@ class MainActivity : AppCompatActivity() {
                     R.plurals.vpn_candidates_found,
                     candidates.size,
                     candidates.size,
-                )
+                ),
         )
         vpnCandidatesMessage!!.setText(
             if (code == "WAITING_MULTIPLE_TAILSCALE") R.string.vpn_candidates_same_user
-            else R.string.vpn_candidates_choose
+            else R.string.vpn_candidates_choose,
         )
         vpnCandidatesList!!.removeAllViews()
         for (candidate in candidates) {
@@ -585,7 +587,7 @@ class MainActivity : AppCompatActivity() {
                     row,
                     if (candidate!!.userId == selected) androidx.appcompat.R.attr.colorPrimary
                     else com.google.android.material.R.attr.colorOutline,
-                )
+                ),
             )
             val rowContent = LinearLayout(this)
             rowContent.setOrientation(LinearLayout.HORIZONTAL)
@@ -594,7 +596,7 @@ class MainActivity : AppCompatActivity() {
             val icon = ImageView(this)
             icon.setImageResource(R.drawable.ic_shield)
             icon.setColorFilter(
-                MaterialColors.getColor(icon, androidx.appcompat.R.attr.colorPrimary)
+                MaterialColors.getColor(icon, androidx.appcompat.R.attr.colorPrimary),
             )
             rowContent.addView(icon, LayoutParams(dp(32), dp(32)))
             val labels = LinearLayout(this)
@@ -610,7 +612,7 @@ class MainActivity : AppCompatActivity() {
             val choice = Chip(this)
             choice.setText(
                 if (candidate!!.userId == selected) R.string.vpn_candidate_selected
-                else R.string.vpn_candidate_use
+                else R.string.vpn_candidate_use,
             )
             choice.setCheckable(false)
             choice.setClickable(false)
@@ -620,7 +622,7 @@ class MainActivity : AppCompatActivity() {
                 row.setOnClickListener(
                     android.view.View.OnClickListener { v: View? ->
                         selectTailscaleUser(candidate!!.userId)
-                    }
+                    },
                 )
             vpnCandidatesList!!.addView(row, rowParams)
         }
@@ -714,7 +716,7 @@ class MainActivity : AppCompatActivity() {
                 else -> R.string.network_unverified
             }
         networkUser!!.setText(
-            getString(R.string.network_user_status, userLabel(selectedUser), getString(checkLabel))
+            getString(R.string.network_user_status, userLabel(selectedUser), getString(checkLabel)),
         )
         verifyNetwork!!.setEnabled(!TailService.running)
         val host: String? = detail!!.split("\t".toRegex()).toTypedArray()[0]
@@ -725,7 +727,7 @@ class MainActivity : AppCompatActivity() {
             active &&
                 selectedMatches &&
                 endpointFields.size >= 5 &&
-                endpointFields[4].matches("[1-9][0-9]{3,4}".toRegex())
+                endpointFields[4].matches("[1-9][0-9]{3,4}".toRegex()),
         )
         start!!.setEnabled(!TailService.running && !busy && !backend)
         stop!!.setEnabled(!TailService.running && backend)
@@ -744,8 +746,8 @@ class MainActivity : AppCompatActivity() {
                     "  ·  " +
                     getString(
                         if (peerAllowed) R.string.root_enabled
-                        else if (shellAllowed) R.string.shell_only else R.string.shell_pending
-                    ))
+                        else if (shellAllowed) R.string.shell_only else R.string.shell_pending,
+                    )),
         )
         renderingAccess = true
         shellToggle!!.setChecked(shellAllowed)
@@ -767,11 +769,11 @@ class MainActivity : AppCompatActivity() {
                 MaterialAlertDialogBuilder(this)
                     .setTitle(R.string.technical)
                     .setMessage(
-                        code + (if (TextCompatibility.isBlank(detail!!)) "" else "\n" + detail)
+                        code + (if (TextCompatibility.isBlank(detail!!)) "" else "\n" + detail),
                     )
                     .setPositiveButton(android.R.string.ok, null)
                     .show()
-            }
+            },
         )
     }
 

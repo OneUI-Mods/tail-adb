@@ -111,3 +111,5 @@ See the [developer guide (Japanese)](docs/development.md) for builds, internals,
 ## String compatibility
 
 Handling of certain whitespace and empty strings in connection information, host lists, and saved candidates has been restored to the previous behavior.
+
+[Build environment / ビルド環境](docs/build-environment.md)

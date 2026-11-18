@@ -1,5 +1,5 @@
-Kotlin standard library 2.2.10
-https://github.com/JetBrains/kotlin/tree/v2.2.10/license
+Kotlin standard library 2.4.21
+https://github.com/JetBrains/kotlin/tree/v2.4.21/license
 
 Includes Kotlin/JVM standard library notices for derived GWT, Guava, ThreeTen backport and Boost code. Compiler-only components are not bundled.
 
