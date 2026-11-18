@@ -34,8 +34,8 @@ android {
         applicationId = "net.ryuya_dev.tailadb"
         minSdk = 36
         targetSdk = 37
-        versionCode = 13
-        versionName = "0.2.11"
+        versionCode = 14
+        versionName = "0.2.12"
         if (android17Validation.get() == "true") versionNameSuffix = "-android17-validation"
     }
     signingConfigs {
