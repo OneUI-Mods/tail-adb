@@ -1,6 +1,6 @@
 # Tail ADB
 
-Installation requires Android 17 (API 37) or later.
+Installation requires Android 16 (API 36) or later.
 
 [日本語](README.md) · English
 
@@ -55,7 +55,7 @@ Root permission is requested automatically on first launch. If denied, the app s
 
 ## Usage
 
-The Tailscale-only connection method works on Android 17. Android 17 has multiple ADB builds, so only verified daemon/authentication-library combinations are allowed. See [compatibility status (Japanese)](docs/compatibility/android17.md).
+The Tailscale-only connection method works on Android 16 and 17. Tail ADB accepts verified daemon and authentication-library combinations. See [compatibility status (Japanese)](docs/compatibility/android17.md).
 
 1. Connect the device and PC to Tailscale.
 2. Open Tail ADB. If necessary, select the Android user running Tailscale in settings.

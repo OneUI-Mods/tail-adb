@@ -1,6 +1,6 @@
 # Tail ADB
 
-インストールにはAndroid 17（API 37）以降が必要です。
+インストールにはAndroid 16（API 36）以降が必要です。
 
 [日本語](README.md) · [English](README.en.md)
 
@@ -55,7 +55,7 @@ adb install -r TailAdb-VERSION-release.apk
 
 ## 使い方
 
-Android 17でTailscale専用の接続方式を使えます。17のADB本体には複数の版があるため、動作確認した本体・認証ライブラリの組み合わせだけを許可します。[対応状況](docs/compatibility/android17.md)
+Android 16・17でTailscale専用の接続方式を使えます。動作確認したADB本体と認証ライブラリの組み合わせだけを許可します。[対応状況](docs/compatibility/android17.md)
 
 1. 端末とPCをTailscaleへ接続します。
 2. Tail ADBを開き、必要なら設定からTailscaleを動かしているAndroidユーザーを選びます。
