@@ -1,5 +1,7 @@
 # Tail ADB
 
+Installation requires Android 17 (API 37) or later.
+
 [日本語](README.md) · English
 
 Tail ADB creates an independent ADB listener on a rooted Android device, reachable only over Tailscale. It works over Wi-Fi or mobile data even with Android's **Wireless debugging** setting off.
@@ -30,7 +32,7 @@ Automatic startup after device boot can be switched on or off in settings. The d
 
 ## Requirements
 
-Physical-device validation covers Galaxy S26 Ultra `SM-S948Q` on Android 16 / One UI 8.5 (`BP4A.251205.006.S948QOPS1AZHL`) and Android 17 / One UI 9 (`CP2A.260605.016.S948QOPU1BZI9`, with verified Mainline ADB versions). Startup is refused if the OS `adbd` and authentication library do not match a verified binary pair.
+Physical-device validation covers Galaxy S26 Ultra `SM-S948Q` on Android 17 / One UI 9 (`CP2A.260605.016.S948QOPU1BZI9`, with verified Mainline ADB versions). Startup is refused if the OS `adbd` and authentication library do not match a verified binary pair.
 
 You need:
 
@@ -53,7 +55,7 @@ Root permission is requested automatically on first launch. If denied, the app s
 
 ## Usage
 
-The Tailscale-only connection method also works on Android 17, while Android 16 support is retained. Android 17 has multiple ADB builds, so only verified daemon/authentication-library combinations are allowed. See [compatibility status (Japanese)](docs/compatibility/android17.md).
+The Tailscale-only connection method works on Android 17. Android 17 has multiple ADB builds, so only verified daemon/authentication-library combinations are allowed. See [compatibility status (Japanese)](docs/compatibility/android17.md).
 
 1. Connect the device and PC to Tailscale.
 2. Open Tail ADB. If necessary, select the Android user running Tailscale in settings.
@@ -78,7 +80,7 @@ The dedicated listener continues after the UI closes, without a persistent notif
 
 ## Connection checks and automatic recovery
 
-Version 0.2.10 adds Android 17 Mainline ADB version 373041180. Android 16 and previously verified ADB versions remain supported; unknown pairs are still refused. Compatibility errors now clarify that they concern the daemon/authentication-library pair rather than the entire OS implementation.
+Version 0.2.10 adds Android 17 Mainline ADB version 373041180. That release retained previously verified ADB versions and continued to refuse unknown pairs. Compatibility errors now clarify that they concern the daemon/authentication-library pair rather than the entire OS implementation.
 
 Version 0.2.8 reduces idle work by lengthening checks while state is stable. Network changes bring checks forward. UI status polling also slows when unchanged.
 

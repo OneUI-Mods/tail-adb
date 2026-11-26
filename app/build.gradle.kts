@@ -32,10 +32,10 @@ android {
     ndkVersion = "30.0.16248370"
     defaultConfig {
         applicationId = "net.ryuya_dev.tailadb"
-        minSdk = 36
+        minSdk = 37
         targetSdk = 37
-        versionCode = 14
-        versionName = "0.2.12"
+        versionCode = 15
+        versionName = "0.2.13"
         if (android17Validation.get() == "true") versionNameSuffix = "-android17-validation"
     }
     signingConfigs {

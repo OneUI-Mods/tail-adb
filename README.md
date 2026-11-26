@@ -1,5 +1,7 @@
 # Tail ADB
 
+インストールにはAndroid 17（API 37）以降が必要です。
+
 [日本語](README.md) · [English](README.en.md)
 
 Tail ADBは、root化したAndroid端末にTailscale経由だけで接続できる、独立したADB待受を作るアプリです。Wi-Fiとモバイルデータのどちらでも利用でき、Android設定の「ワイヤレスデバッグ」をオフにしても動作します。
@@ -30,7 +32,7 @@ Tail ADBは、root化したAndroid端末にTailscale経由だけで接続でき�
 
 ## 対応環境
 
-実機で確認した環境はGalaxy S26 Ultra `SM-S948Q`のAndroid 16 / One UI 8.5（`BP4A.251205.006.S948QOPS1AZHL`）とAndroid 17 / One UI 9（`CP2A.260605.016.S948QOPU1BZI9`、検証済みMainline ADB搭載）です。OS内の`adbd`と認証ライブラリが検証済みバイナリと一致しない場合は、安全のため開始しません。
+実機で確認した環境はGalaxy S26 Ultra `SM-S948Q`のAndroid 17 / One UI 9（`CP2A.260605.016.S948QOPU1BZI9`、検証済みMainline ADB搭載）です。OS内の`adbd`と認証ライブラリが検証済みバイナリと一致しない場合は、安全のため開始しません。
 
 必要なもの：
 
@@ -53,7 +55,7 @@ adb install -r TailAdb-VERSION-release.apk
 
 ## 使い方
 
-Android 17でもTailscale専用の接続方式を使えます。Android 16の対応も維持しています。17のADB本体には複数の版があるため、動作確認した本体・認証ライブラリの組み合わせだけを許可します。[対応状況](docs/compatibility/android17.md)
+Android 17でTailscale専用の接続方式を使えます。17のADB本体には複数の版があるため、動作確認した本体・認証ライブラリの組み合わせだけを許可します。[対応状況](docs/compatibility/android17.md)
 
 1. 端末とPCをTailscaleへ接続します。
 2. Tail ADBを開き、必要なら設定からTailscaleを動かしているAndroidユーザーを選びます。
@@ -78,7 +80,7 @@ rootが必要なホストだけ「root昇格を許可」をオンにし、ADB sh
 
 ## 接続の確認と自動復旧
 
-0.2.10では、Android 17のMainline ADB更新（373041180）に対応しました。Android 16と以前の確認済みADBの対応を維持し、未知の組み合わせは引き続き開始しません。互換性エラーの表示も、OS全体ではなくADB本体と認証ライブラリの組み合わせを指すことが分かる文面に変更しました。
+0.2.10では、Android 17のMainline ADB更新（373041180）に対応しました。当時は以前の確認済みADBの対応も維持し、未知の組み合わせは引き続き開始しません。互換性エラーの表示も、OS全体ではなくADB本体と認証ライブラリの組み合わせを指すことが分かる文面に変更しました。
 
 0.2.8では、状態が安定している間の確認間隔を調整し、待機中の処理を減らしています。ネットワークの変化があれば確認を前倒しします。アプリ画面の状態取得も、変化がない間は間隔を延ばします。
 
